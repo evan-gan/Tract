@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="22757" systemVersion="23A344" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithSwiftData="NO" userDefinedModelVersionIdentifier="">
+    <entity name="DocumentEntity" representedClassName="DocumentEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="canvasOriginX" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="canvasOriginY" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="canvasScale" attributeType="Double" defaultValueString="1.0" usesScalarValueType="YES"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="modifiedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="title" attributeType="String" defaultValueString="Untitled"/>
+        <relationship name="strokes" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="StrokeEntity" inverseName="document" inverseEntity="StrokeEntity"/>
+    </entity>
+    <entity name="StrokeEntity" representedClassName="StrokeEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="colorA" attributeType="Float" defaultValueString="1" usesScalarValueType="YES"/>
+        <attribute name="colorB" attributeType="Float" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="colorG" attributeType="Float" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="colorR" attributeType="Float" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="endTime" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="lineWidth" attributeType="Float" defaultValueString="2" usesScalarValueType="YES"/>
+        <attribute name="opacity" attributeType="Float" defaultValueString="1" usesScalarValueType="YES"/>
+        <attribute name="pointsData" attributeType="Binary"/>
+        <attribute name="sessionID" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="startTime" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="tool" attributeType="String" defaultValueString="pen"/>
+        <relationship name="document" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="DocumentEntity" inverseName="strokes" inverseEntity="DocumentEntity"/>
+    </entity>
+</model>

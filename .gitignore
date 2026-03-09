@@ -1,0 +1,51 @@
+# Xcode build artifacts
+build/
+DerivedData/
+*.xcarchive
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# User-specific Xcode state
+*.xcuserstate
+xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# CocoaPods (if ever added)
+Pods/
+*.xcworkspace
+
+# Carthage (if ever added)
+Carthage/Build/
+Carthage/Checkouts/
+
+# Fastlane (if ever added)
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Secrets / environment
+*.env
+secrets.plist
