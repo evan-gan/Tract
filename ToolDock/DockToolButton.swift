@@ -19,8 +19,11 @@ struct DockToolButton: View {
                 .contentShape(.rect(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-        .background(isActive ? Color.accentColor.opacity(0.18) : Color.clear,
+        // Hierarchical rather than `Color.secondary`: the dock's glass sets the
+        // literal label colours, and only the hierarchical levels inherit them.
+        // The active tint is literal, so it reads the same in both schemes.
+        .foregroundStyle(isActive ? AnyShapeStyle(AppTint.active) : AnyShapeStyle(.secondary))
+        .background(isActive ? AppTint.active.opacity(0.22) : Color.clear,
                     in: .rect(cornerRadius: 12))
         .offset(
             x: isActive ? liftDirection.width * Self.liftDistance : 0,

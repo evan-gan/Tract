@@ -3,6 +3,8 @@ name: coding-standards
 description: Apply project coding standards when writing, reviewing, or modifying code. Use this skill whenever you are writing new code, editing existing code, creating components, reviewing a PR, refactoring, or setting up a new project. This includes any task that produces code as output — functions, modules, components, scripts, tests, or configuration files. Trigger this skill even for small changes like adding a helper function or renaming a variable.
 ---
 
+Any commands with rm should be their own command so that they can be easily reviewed & not bundled with other commands.
+
 # Tract — Build & Tooling
 
 Tract is an iPad-only SwiftUI drawing app (iOS 26, Swift 6.2). **Xcode never needs to
@@ -20,10 +22,33 @@ be opened.** Everything below runs headless from the shell.
 
 # Unit + UI tests on an iPad simulator
 ./scripts/test.sh ["iPad Pro 11-inch (M5)"]
+
+# Screenshot the canvas on a simulator — light, dark, or both
+./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"]
 ```
 
 `scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
 produces nothing installable. Use `deploy-device.sh` to actually run it on hardware.
+
+## Seeing a UI change without Xcode
+
+`./scripts/screenshot.sh` is the way to actually *look* at the app. It boots the
+simulator, sets its light/dark appearance, runs the capture test in
+`UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
+into `build/screenshots/canvas-<appearance>.png` — read that file to see the change.
+
+Do not hand-roll this. It exists because the pieces are non-obvious:
+
+- The appearance is set with `xcrun simctl ui <udid> appearance dark` **before**
+  launching, on an already-booted simulator; the app just follows system settings.
+- Screenshots come out of the test as `XCTAttachment`s, and need
+  `lifetime = .keepAlways` or a passing test throws them away.
+- They are then exported with `xcrun xcresulttool export attachments`, which names
+  files by UUID — `manifest.json` is what maps them back to the test's own name.
+
+To capture a different screen, add a test to `CanvasSnapshotUITests` that navigates
+there and calls `attachScreenshot(named:)`; the script picks up any attachment whose
+name starts with `canvas`.
 
 ## Project generation
 

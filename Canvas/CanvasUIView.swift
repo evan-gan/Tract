@@ -59,7 +59,7 @@ final class CanvasUIView: UIView {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, touch.type == .pencil else { return }
-        addStrokePoint(from: touch, event: event, phase: .began)
+        addStrokePoint(from: touch, phase: .began)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -67,13 +67,13 @@ final class CanvasUIView: UIView {
         // Consume coalesced touches to capture all 240 Hz Pencil Pro samples.
         let samples = event?.coalescedTouches(for: touch) ?? [touch]
         for sample in samples {
-            addStrokePoint(from: sample, event: event, phase: .moved)
+            addStrokePoint(from: sample, phase: .moved)
         }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, touch.type == .pencil else { return }
-        addStrokePoint(from: touch, event: event, phase: .ended)
+        addStrokePoint(from: touch, phase: .ended)
         Task { @MainActor in viewModel?.endStroke() }
     }
 
@@ -92,30 +92,14 @@ final class CanvasUIView: UIView {
 
     // MARK: - Point extraction
 
-    private func addStrokePoint(from touch: UITouch, event: UIEvent?, phase: UITouch.Phase) {
+    private func addStrokePoint(from touch: UITouch, phase: UITouch.Phase) {
         guard let viewModel else { return }
         let point = makeStrokePoint(from: touch)
         Task { @MainActor in
             if phase == .began {
-                viewModel.beginStroke(
-                    at: point.position,
-                    force: point.force,
-                    azimuth: point.azimuth,
-                    altitude: point.altitude,
-                    roll: point.rollAngle,
-                    estimatedMask: point.estimatedPropertiesMask,
-                    updateIndex: point.estimationUpdateIndex
-                )
-            } else if phase == .moved {
-                viewModel.continueStroke(
-                    at: point.position,
-                    force: point.force,
-                    azimuth: point.azimuth,
-                    altitude: point.altitude,
-                    roll: point.rollAngle,
-                    estimatedMask: point.estimatedPropertiesMask,
-                    updateIndex: point.estimationUpdateIndex
-                )
+                viewModel.beginStroke(with: point)
+            } else {
+                viewModel.continueStroke(with: point)
             }
         }
     }
@@ -196,10 +180,10 @@ extension CanvasUIView: UIPencilInteractionDelegate {
         // Cycle to the next tool on Pencil Pro squeeze.
         Task { @MainActor in
             guard let viewModel else { return }
-            let tools = ToolType.drawingTools
+            let tools = ToolType.allCases
             let currentIndex = tools.firstIndex(of: viewModel.activeTool) ?? 0
             let nextIndex = (currentIndex + 1) % tools.count
-            viewModel.activeTool = tools[nextIndex]
+            viewModel.selectTool(tools[nextIndex])
         }
     }
 }

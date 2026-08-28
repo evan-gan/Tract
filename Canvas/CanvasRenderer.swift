@@ -22,7 +22,9 @@ struct CanvasRenderer: View {
     }
 
     private func draw(stroke: Stroke, in context: inout GraphicsContext) {
-        guard stroke.points.count >= 2 else { return }
+        // The eraser and lasso leave no ink; documents saved before they became
+        // non-drawing tools can still carry such strokes, so skip them here.
+        guard stroke.style.tool.isDrawingTool, stroke.points.count >= 2 else { return }
 
         let path = buildPath(for: stroke)
         context.stroke(

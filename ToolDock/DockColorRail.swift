@@ -52,7 +52,7 @@ struct DockColorRail: View {
 
     private func hairline(inset: CGFloat) -> some View {
         Circle()
-            .strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5)
+            .strokeBorder(.primary.opacity(0.15), lineWidth: 0.5)
             .padding(inset)
     }
 }
@@ -70,7 +70,7 @@ struct InkWheelButton: View {
                 .frame(width: 26, height: 26)
                 .overlay {
                     Circle().strokeBorder(
-                        isPanelOpen ? Color.accentColor : Color.primary.opacity(0.15),
+                        isPanelOpen ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary.opacity(0.15)),
                         lineWidth: isPanelOpen ? 2 : 0.5
                     )
                 }

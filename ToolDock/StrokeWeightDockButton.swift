@@ -18,7 +18,7 @@ struct StrokeWeightDockButton: View {
             .contentShape(.rect(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isPickerOpen ? Color.accentColor : Color.secondary)
+        .foregroundStyle(isPickerOpen ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
         .background(isPickerOpen ? Color.accentColor.opacity(0.18) : Color.clear,
                     in: .rect(cornerRadius: 12))
         .accessibilityLabel("Stroke weight")

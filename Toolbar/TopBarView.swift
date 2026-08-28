@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Document chrome at the top of the screen: title and selection mode in one
-/// glass pill, with Export as its own prominent glass surface beside it.
+/// Document chrome at the top of the screen: back and title in one glass pill,
+/// with Export as its own prominent glass surface beside it.
+/// Selection lives on the lasso tool in the dock, not up here.
 /// Undo/redo live on the movable tool dock instead.
 struct TopBarView: View {
-    @Bindable var viewModel: CanvasViewModel
     let glassNamespace: Namespace.ID
     let onClose: () -> Void
     let onExportTapped: () -> Void
@@ -30,8 +30,6 @@ struct TopBarView: View {
             Divider().frame(height: 20)
 
             DocumentTitleView(title: $documentTitle)
-            Divider().frame(height: 20)
-            SelectToolButton(isSelectionMode: $viewModel.isSelectionMode)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

@@ -56,3 +56,22 @@ for device in devices:
         break
 PY
 }
+
+# UDID of an available simulator by name, whatever state it is in.
+simulator_udid() {
+  local simulator_name="$1" udid
+  udid="$(xcrun simctl list devices available \
+    | grep -F "$simulator_name (" \
+    | head -1 \
+    | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')"
+  [ -n "$udid" ] || fail "No available simulator named '$simulator_name' — see: xcrun simctl list devices available"
+  printf '%s' "$udid"
+}
+
+# Boots a simulator if needed and waits for it to finish. Setting the appearance
+# or taking a screenshot on a shutdown device fails, so callers must do this first.
+boot_simulator() {
+  local udid="$1"
+  xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+  xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || fail "Simulator $udid would not boot."
+}
