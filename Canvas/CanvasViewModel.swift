@@ -44,6 +44,28 @@ final class CanvasViewModel {
     // MARK: - Canvas navigation
     var canvasTransform = CanvasTransform()
 
+    // MARK: - Pencil hover
+    /// Where the pencil is hovering above the glass, in screen space, or `nil`
+    /// when it is out of range or already touching down.
+    private(set) var pencilHoverLocation: CGPoint?
+
+    /// Diameter the hover preview should be drawn at, in screen points. The width
+    /// lives in canvas space, so the preview scales with the zoom — what you see
+    /// hovering is the size the mark will actually be.
+    var pencilPreviewDiameter: CGFloat {
+        canvasTransform.toScreen(length: strokeWidth)
+    }
+
+    /// Colour of the hover preview: the ink about to be laid down, or a neutral
+    /// marker for tools that lay down none.
+    var pencilPreviewColor: Color {
+        activeTool.isDrawingTool ? currentStyle().swiftUIColor : Color.gray
+    }
+
+    func updatePencilHover(to screenPoint: CGPoint?) {
+        pencilHoverLocation = screenPoint
+    }
+
     // MARK: - Selection
     /// The loop the user is currently drawing with the lasso, in canvas space.
     /// Empty whenever no lasso gesture is in flight.
@@ -98,6 +120,8 @@ final class CanvasViewModel {
     // MARK: - Stroke lifecycle
 
     func beginStroke(with point: StrokePoint) {
+        // The nib is on the glass now, so there is nothing left to preview.
+        pencilHoverLocation = nil
         switch activeTool {
         case .pen: beginInkStroke(with: point)
         case .eraser: beginErase(at: point.position)

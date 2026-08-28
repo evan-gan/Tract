@@ -31,7 +31,7 @@ struct CanvasRenderer: View {
             path,
             with: .color(stroke.style.swiftUIColor),
             style: SwiftUI.StrokeStyle(
-                lineWidth: stroke.style.lineWidth,
+                lineWidth: transform.toScreen(length: stroke.style.lineWidth),
                 lineCap: .round,
                 lineJoin: .round
             )

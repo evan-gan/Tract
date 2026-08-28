@@ -43,7 +43,54 @@ final class ToolDockDragUITests: XCTestCase {
                              "Parked on the top edge, the dock should still be a row.")
     }
 
+    /// The dock is almost entirely buttons, so a finger grabbing "the bar" nearly
+    /// always lands on one. If the drag does not outrank them, the dock can only
+    /// be moved from the narrow grip — reachable with a pencil tip, not a finger.
+    func testDraggingFromAToolButtonMovesTheDock() {
+        let dockedAtBottom = handleFrame()
+
+        drag(app.buttons["Pen"].firstMatch, to: CGVector(dx: 0.94, dy: 0.5))
+
+        let dockedOnTheSide = handleFrame()
+        XCTAssertGreaterThan(dockedOnTheSide.midX, dockedAtBottom.midX,
+                             "Dragging from a tool button should have moved the dock right.")
+        XCTAssertLessThan(dockedOnTheSide.midY, dockedAtBottom.midY,
+                          "Dragging from a tool button should have moved it off the bottom.")
+    }
+
+    /// The other half of the same bargain: a drag that outranks the buttons must
+    /// not swallow their taps, and must not fire one when the dock is dropped.
+    func testTappingAToolButtonStillSelectsIt() {
+        let eraser = app.buttons["Eraser"].firstMatch
+        XCTAssertTrue(eraser.waitForExistence(timeout: 15))
+        XCTAssertFalse(eraser.isSelected, "The canvas opens on the pen.")
+
+        eraser.tap()
+
+        XCTAssertTrue(app.buttons["Eraser"].firstMatch.isSelected,
+                      "A tap on the dock should still reach the button under it.")
+    }
+
+    func testDraggingFromAColorSwatchDoesNotChangeTheInk() {
+        app.buttons["Eraser"].firstMatch.tap()
+
+        // Picking an ink implies drawing with it, so a swatch that fired here
+        // would hand the tool back to the pen — which is what this detects.
+        drag(colorSwatch(), to: CGVector(dx: 0.5, dy: 0.18))
+
+        XCTAssertTrue(app.buttons["Eraser"].firstMatch.isSelected,
+                      "Dropping the dock must not also trigger the swatch it started on.")
+    }
+
     // MARK: - Helpers
+
+    /// The rail's labels carry the colour's hex, so the swatches are found by
+    /// position in the dock rather than by naming one particular colour.
+    private func colorSwatch() -> XCUIElement {
+        let swatches = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Ink colour"))
+        XCTAssertGreaterThan(swatches.count, 0, "The dock should show its quick ink colours.")
+        return swatches.element(boundBy: 0)
+    }
 
     /// Re-queries every time: an XCUIElement can otherwise serve a stale frame.
     private func handleFrame() -> CGRect {
@@ -53,14 +100,21 @@ final class ToolDockDragUITests: XCTestCase {
     }
 
     /// A slow drag with a hold: SwiftUI needs the intermediate touch events, and
-    /// the hold lets the settle animation finish before the frame is read.
+    /// the hold lets the settle animation — which runs for the better part of a
+    /// second — finish before the frame is read.
     private func dragHandle(to destination: CGVector) {
-        app.otherElements["Drag to move the tool bar"].firstMatch
+        drag(app.otherElements["Drag to move the tool bar"].firstMatch, to: destination)
+    }
+
+    /// Drags from the centre of `origin` to a normalised point on screen.
+    private func drag(_ origin: XCUIElement, to destination: CGVector) {
+        XCTAssertTrue(origin.waitForExistence(timeout: 15), "The drag origin should be on screen.")
+        origin
             .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.2,
                    thenDragTo: app.coordinate(withNormalizedOffset: destination),
                    withVelocity: .slow,
-                   thenHoldForDuration: 0.6)
+                   thenHoldForDuration: 1.8)
     }
 
     /// The app opens on the document list; the dock only exists on the canvas.

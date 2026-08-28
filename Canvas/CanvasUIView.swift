@@ -4,9 +4,10 @@ import UIKit
 #error("This file requires UIKit and is designed for iOS/iPadOS only")
 #endif
 
-/// UIView subclass responsible for two things only:
+/// UIView subclass responsible for three things only:
 ///   1. Routing Apple Pencil touches to the view model.
 ///   2. Handling two-finger pan and pinch-to-zoom gestures.
+///   3. Tracking where the pencil hovers, so the canvas can preview the nib.
 ///
 /// Finger touches are intentionally ignored for drawing — they fall through
 /// to the gesture recognizers, which are also configured to finger-only.
@@ -17,6 +18,10 @@ final class CanvasUIView: UIView {
     // two-finger canvas navigation, eliminating any interference between
     // a separate pan recognizer and the pinch recognizer.
     private let pinchGesture = UIPinchGestureRecognizer()
+
+    // Reports the pencil's position while it is near the glass but not touching,
+    // which is what drives the hover preview dot.
+    private let hoverGesture = UIHoverGestureRecognizer()
 
     // Canvas-space positions of the two fingers captured at gesture start.
     // Held fixed for the duration of the gesture; each frame solves for the
@@ -46,6 +51,13 @@ final class CanvasUIView: UIView {
         pinchGesture.allowedTouchTypes = [fingerTouchType]
         pinchGesture.addTarget(self, action: #selector(handlePinch(_:)))
         addGestureRecognizer(pinchGesture)
+
+        // Pencil only: a trackpad pointer also produces hover events, and a preview
+        // dot chasing the cursor would be claiming a nib that isn't there.
+        let pencilTouchType = NSNumber(value: UITouch.TouchType.pencil.rawValue)
+        hoverGesture.allowedTouchTypes = [pencilTouchType]
+        hoverGesture.addTarget(self, action: #selector(handleHover(_:)))
+        addGestureRecognizer(hoverGesture)
     }
 
     private func configurePencilInteraction() {
@@ -80,6 +92,21 @@ final class CanvasUIView: UIView {
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard touches.first?.type == .pencil else { return }
         Task { @MainActor in viewModel?.cancelStroke() }
+    }
+
+    // MARK: - Pencil hover
+
+    /// Publishes the hovering nib's screen position, and clears it the moment the
+    /// pencil leaves range so no stale dot is left sitting on the canvas.
+    @objc private func handleHover(_ gesture: UIHoverGestureRecognizer) {
+        guard let viewModel else { return }
+        let hoverLocation: CGPoint? = switch gesture.state {
+        case .began, .changed: gesture.location(in: self)
+        default: nil
+        }
+        // Hover callbacks already arrive on the main thread; going through a Task
+        // would let the dot trail a frame or two behind the pencil.
+        MainActor.assumeIsolated { viewModel.updatePencilHover(to: hoverLocation) }
     }
 
     override func touchesEstimatedPropertiesUpdated(_ touches: Set<UITouch>) {

@@ -26,4 +26,13 @@ struct CanvasTransform: Sendable {
         canvasPoint.applying(matrix)
     }
 
+    /// Convert a canvas-space length — a stroke width, a radius — to screen points.
+    ///
+    /// Widths are stored in canvas space, so they have to grow and shrink with the
+    /// zoom exactly like the geometry they belong to. Left unscaled, zooming in
+    /// would thin the ink relative to the drawing instead of magnifying it.
+    func toScreen(length canvasLength: CGFloat) -> CGFloat {
+        canvasLength * scale
+    }
+
 }

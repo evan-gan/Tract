@@ -49,10 +49,10 @@ Tract/
 ├── Canvas/                       # Core drawing engine
 │   ├── CanvasContainerView.swift # Root screen — composes everything, owns CanvasViewModel
 │   ├── CanvasView.swift          # UIViewRepresentable wrapper (no logic)
-│   ├── CanvasUIView.swift        # UIView — pencil touches + pan/pinch gestures
+│   ├── CanvasUIView.swift        # UIView — pencil touches, pan/pinch, pencil hover tracking
 │   ├── CanvasRenderer.swift      # SwiftUI Canvas — strokes → screen paths
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
-│   └── CanvasTransform.swift     # Pan/zoom value type + screen↔canvas conversion
+│   └── CanvasTransform.swift     # Pan/zoom value type + screen↔canvas point and length conversion
 │
 ├── Toolbar/                      # Fixed top chrome (close, title, export)
 │   ├── TopBarView.swift          # Assembles the top pill + Export button
@@ -81,11 +81,12 @@ Tract/
 │   ├── ZoomIndicatorView.swift   # "100%" readout, top-right. Tap → reset zoom.
 │   ├── SelectionStyle.swift      # Shared selection tokens: red, dash, standoff, softening
 │   ├── LassoPathView.swift       # The loop being traced, drawn closed and static
-│   └── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection
+│   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection
+│   └── PencilHoverDotView.swift  # Dot under the hovering nib, at the size the mark will be
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures — builds strokes from bare points
-│   ├── Canvas/                   # Eraser deletion + lasso selection behaviour
+│   ├── Canvas/                   # Eraser, lasso, zoom-scaled widths, pencil hover preview
 │   ├── Stroke/                   # StrokeGeometry hits + SelectionOutline hull/offset
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
@@ -184,8 +185,19 @@ weight, and the quick ink colours. Rules that hold when changing it:
   heading toward. It is pure and unit-tested — keep it that way.
 - **The dock re-flows, it does not rebuild.** `DockLayout.stack(along:)` returns an
   `AnyLayout`, so children keep their identity and slide between row and column.
-- **Drag from the grip or any empty part of the bar.** The gesture is on the whole
-  dock with a minimum distance, so button taps still work; the grip is the affordance.
+- **The dock does not re-orient until it is let go.** During a drag it keeps its
+  current shape and follows the touch 1:1 with an unanimated offset; on release, the
+  re-park, the row↔column re-flow and the offset unwinding all ride one slow spring
+  (`settleAnimation`), so it reads as one object settling rather than several parts
+  rearranging. Re-flowing mid-drag was the old behaviour and read as a flicker.
+- **Drag from anywhere on the bar, grip or button.** The gesture is attached to the
+  whole dock as a `highPriorityGesture`, so it outranks the buttons that cover nearly
+  all of it — a plain `.gesture` leaves only the 16pt grip and the slivers between
+  controls reliably draggable, which a pencil tip can hit and a fingertip often
+  cannot. The minimum distance is what keeps taps working: the drag never recognises
+  without real movement, and once it does, the button under the touch is cancelled,
+  so dropping the dock on a swatch cannot also change the ink. All three behaviours
+  are covered by `ToolDockDragUITests`, which drives finger-type touches.
 - **The canvas must own the whole screen.** It is presented as a `fullScreenCover`,
   not a split-view detail column — a sidebar covers the dock in portrait and
   swallows drags aimed at it.
@@ -248,7 +260,43 @@ Apple Pencil → UIView.touchesBegan/Moved/Ended
   → StrokePoint (screen → canvas via CanvasTransform.toCanvas)
   → CanvasViewModel.beginStroke / continueStroke / endStroke
   → SwiftUI Canvas re-renders
+
+Apple Pencil hovering (not touching) → UIHoverGestureRecognizer (pencil touch type only)
+  → CanvasViewModel.updatePencilHover(to:)   ← screen space, cleared on touch-down
+  → PencilHoverDotView
 ```
+
+---
+
+## Zoom and ink weight
+
+Stroke widths are stored in **canvas** space, like every coordinate. Anything that
+draws ink or previews it on screen must therefore put its width through
+`CanvasTransform.toScreen(length:)`, so zooming magnifies the drawing rather than
+spreading its points apart while the lines stay a fixed thickness.
+
+- `CanvasRenderer` scales each stroke's `lineWidth` by the transform.
+- The hover preview's diameter comes from `CanvasViewModel.pencilPreviewDiameter`,
+  which is the same conversion applied to the current `strokeWidth`.
+- The exporters deliberately do **not** scale: they render in canvas space at 1:1.
+- Selection chrome is the exception in the other direction — its dash and standoff
+  are constants in screen space, because it is chrome, not ink.
+
+---
+
+## Pencil hover preview
+
+`PencilHoverDotView` shows where the nib will land, drawn at the size of the mark it
+would leave. `CanvasUIView` feeds it from a `UIHoverGestureRecognizer` restricted to
+the pencil touch type — a trackpad pointer also hovers, and a dot chasing the cursor
+would be claiming a nib that isn't there.
+
+- The location is **screen** space, published straight from the recognizer on the main
+  thread (no `Task`) so the dot cannot trail the pencil by a frame.
+- `beginStroke` clears it, so no dot is ever stranded under a nib that is drawing.
+- Non-drawing tools preview in neutral grey; pens preview in the ink they will lay down.
+- The dot has a minimum diameter, or a hairline weight zoomed out would vanish exactly
+  when the user needs to see where the pencil is pointing.
 
 ---
 
@@ -263,6 +311,9 @@ Apple Pencil → UIView.touchesBegan/Moved/Ended
 | Change how the selection outline is shaped | `SelectionOutline.swift` |
 | Change the dock's quick colours | `InkColor.dockPalette` in `InkColor.swift` |
 | Change how the dock snaps | `DockEdge.nearest(to:in:)` in `DockEdge.swift` |
+| Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift` |
+| Change how ink weight responds to zoom | `CanvasTransform.toScreen(length:)` |
+| Change the hover preview's look | `PencilHoverDotView.swift`; its size and colour come from `CanvasViewModel.pencilPreviewDiameter` / `pencilPreviewColor` |
 | Change canvas background | `CanvasBackgroundView` in `CanvasContainerView.swift` (white in both colour schemes — it is paper, not chrome) |
 | Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, add to `ExportSheetView.adapters` |
 | Change the glass chrome style | `View+GlassChrome.swift` |

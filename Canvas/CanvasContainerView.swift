@@ -31,6 +31,8 @@ struct CanvasContainerView: View {
             // lasso keeps tracking while its own outline is on screen.
             selectionOverlay
                 .ignoresSafeArea()
+            pencilHoverPreview
+                .ignoresSafeArea()
             // Chrome deliberately keeps the safe area: it is what stops the
             // dock from parking under the status bar or the home indicator.
             overlayChrome
@@ -83,6 +85,19 @@ struct CanvasContainerView: View {
                     transform: viewModel.canvasTransform
                 )
             }
+        }
+    }
+
+    /// The nib preview tracks the pencil rather than the chrome, so like the
+    /// selection layer it stays out of the glass container.
+    @ViewBuilder
+    private var pencilHoverPreview: some View {
+        if let hoverLocation = viewModel.pencilHoverLocation {
+            PencilHoverDotView(
+                location: hoverLocation,
+                diameter: viewModel.pencilPreviewDiameter,
+                color: viewModel.pencilPreviewColor
+            )
         }
     }
 
