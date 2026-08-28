@@ -190,11 +190,15 @@ final class CanvasUIView: UIView {
             // Solve for the unique scale+translation that places canvas point
             // a0 at screen position curr0 and a1 at curr1. Absolute, not
             // incremental, so floating-point errors cannot accumulate.
-            let newScale = curr0.distance(to: curr1) / canvasDist
-            viewModel.canvasTransform.scale = newScale
+            viewModel.canvasTransform.scale = curr0.distance(to: curr1) / canvasDist
+            // Read the scale back rather than reusing the requested one: at the
+            // zoom limits it has been clamped, and solving with the unclamped
+            // value would slide the canvas out from under a pinch that can no
+            // longer zoom.
+            let appliedScale = viewModel.canvasTransform.scale
             viewModel.canvasTransform.translation = CGPoint(
-                x: curr0.x - a0.x * newScale,
-                y: curr0.y - a0.y * newScale
+                x: curr0.x - a0.x * appliedScale,
+                y: curr0.y - a0.y * appliedScale
             )
         }
     }
@@ -204,13 +208,6 @@ final class CanvasUIView: UIView {
 
 extension CanvasUIView: UIPencilInteractionDelegate {
     func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
-        // Cycle to the next tool on Pencil Pro squeeze.
-        Task { @MainActor in
-            guard let viewModel else { return }
-            let tools = ToolType.allCases
-            let currentIndex = tools.firstIndex(of: viewModel.activeTool) ?? 0
-            let nextIndex = (currentIndex + 1) % tools.count
-            viewModel.selectTool(tools[nextIndex])
-        }
+        Task { @MainActor in viewModel?.togglePencilShortcutTool() }
     }
 }

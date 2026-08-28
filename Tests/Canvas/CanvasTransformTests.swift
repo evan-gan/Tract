@@ -33,6 +33,33 @@ struct CanvasTransformTests {
         #expect(transform.toScreen(length: 8) == 2)
     }
 
+    @Test("Zooming in stops at the maximum")
+    func scaleIsCappedAtTheMaximum() {
+        var transform = CanvasTransform()
+        transform.scale = 40
+        #expect(transform.scale == CanvasTransform.maximumScale)
+    }
+
+    @Test("Zooming out stops at the minimum")
+    func scaleIsFlooredAtTheMinimum() {
+        var transform = CanvasTransform()
+        transform.scale = 0.001
+        #expect(transform.scale == CanvasTransform.minimumScale)
+    }
+
+    @Test("A scale inside the range is left exactly as set")
+    func scaleInsideTheRangeIsUntouched() {
+        var transform = CanvasTransform()
+        transform.scale = 2.5
+        #expect(transform.scale == 2.5)
+    }
+
+    @Test("The zoom range spans 10% to 500%")
+    func zoomRangeIsTenToFiveHundredPercent() {
+        #expect(CanvasTransform.minimumScale == 0.1)
+        #expect(CanvasTransform.maximumScale == 5.0)
+    }
+
     @Test("Panning does not change how wide a stroke is drawn")
     func translationLeavesWidthAlone() {
         var transform = CanvasTransform()

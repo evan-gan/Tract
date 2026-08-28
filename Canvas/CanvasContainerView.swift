@@ -45,7 +45,7 @@ struct CanvasContainerView: View {
     // MARK: - Sub-regions
 
     private var canvasBackground: some View {
-        CanvasBackgroundView()
+        CanvasBackgroundView(transform: viewModel.canvasTransform)
             .ignoresSafeArea()
     }
 
@@ -134,38 +134,6 @@ struct CanvasContainerView: View {
             canvasOrigin: viewModel.canvasTransform.translation,
             canvasScale: viewModel.canvasTransform.scale
         )
-    }
-}
-
-// MARK: - Canvas background
-
-/// Draws the white canvas and its dot grid. The paper stays white in both colour
-/// schemes — it is the sheet being drawn on, not chrome, and a canvas that
-/// inverted would flip the meaning of every stroke colour already on it.
-private struct CanvasBackgroundView: View {
-    var body: some View {
-        Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
-            drawDotGrid(in: &context, size: size)
-        }
-    }
-
-    private func drawDotGrid(in context: inout GraphicsContext, size: CGSize) {
-        let dotSpacing: CGFloat = 24
-        let dotRadius: CGFloat = 1
-        let dotColor: Color = .black.opacity(0.08)
-
-        var x: CGFloat = dotSpacing
-        while x < size.width {
-            var y: CGFloat = dotSpacing
-            while y < size.height {
-                let dot = Path(ellipseIn: CGRect(x: x - dotRadius, y: y - dotRadius,
-                                                  width: dotRadius * 2, height: dotRadius * 2))
-                context.fill(dot, with: .color(dotColor))
-                y += dotSpacing
-            }
-            x += dotSpacing
-        }
     }
 }
 

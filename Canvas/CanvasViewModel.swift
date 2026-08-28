@@ -34,6 +34,13 @@ final class CanvasViewModel {
         activeTool = tool
     }
 
+    /// Apple Pencil's double tap swaps between the pen and the eraser, and nothing
+    /// else. Cycling every tool would land on the lasso mid-drawing, which is
+    /// never what a double tap in the middle of a stroke is asking for.
+    func togglePencilShortcutTool() {
+        selectTool(activeTool == .eraser ? lastDrawingTool : .eraser)
+    }
+
     /// Picking a colour implies drawing with it, so a non-drawing tool hands
     /// back to the last pen rather than leaving the choice with no effect.
     func selectInkColor(_ color: SIMD4<Float>) {

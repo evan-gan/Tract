@@ -4,7 +4,17 @@ import CoreGraphics
 /// All stroke positions are stored in canvas space; this transform converts
 /// between canvas space and screen space.
 struct CanvasTransform: Sendable {
-    var scale: CGFloat = 1.0
+    /// Zoom limits. Clamped here rather than in the pinch handler so no caller —
+    /// a restored document, a future zoom control — can put the canvas somewhere
+    /// the user cannot pinch their way back out of.
+    static let minimumScale: CGFloat = 0.1
+    static let maximumScale: CGFloat = 5.0
+
+    /// Assigning out of range silently clamps. Re-assigning inside `didSet` does
+    /// not re-trigger it, so this settles in one pass.
+    var scale: CGFloat = 1.0 {
+        didSet { scale = min(max(scale, Self.minimumScale), Self.maximumScale) }
+    }
     var translation: CGPoint = .zero
 
     /// The affine transform that maps canvas space → screen space: `p' = p*scale + translation`.

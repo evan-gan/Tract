@@ -51,8 +51,10 @@ Tract/
 │   ├── CanvasView.swift          # UIViewRepresentable wrapper (no logic)
 │   ├── CanvasUIView.swift        # UIView — pencil touches, pan/pinch, pencil hover tracking
 │   ├── CanvasRenderer.swift      # SwiftUI Canvas — strokes → screen paths
+│   ├── CanvasBackgroundView.swift # White paper + dot grid, both tracking the transform
+│   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, pan phase
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
-│   └── CanvasTransform.swift     # Pan/zoom value type + screen↔canvas point and length conversion
+│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–500%, screen↔canvas conversion
 │
 ├── Toolbar/                      # Fixed top chrome (close, title, export)
 │   ├── TopBarView.swift          # Assembles the top pill + Export button
@@ -91,6 +93,7 @@ Tract/
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
 │   ├── ToolDockDragUITests.swift # The dock's drag/snap gesture
+│   ├── CanvasZoomUITests.swift   # Pinch limits, read back off the zoom pill
 │   └── CanvasSnapshotUITests.swift # Screenshot capture driven by scripts/screenshot.sh
 │
 ├── Stroke/                       # Pure data types — no UIKit/SwiftUI imports
@@ -268,6 +271,37 @@ Apple Pencil hovering (not touching) → UIHoverGestureRecognizer (pencil touch 
 
 ---
 
+## Zoom limits
+
+`CanvasTransform.scale` clamps itself to `minimumScale` (10%) … `maximumScale` (500%)
+in a `didSet`, so no caller can put the canvas somewhere the user cannot pinch back
+from — not the pinch handler, not a restored document, not a future zoom control.
+
+The pinch handler must therefore solve its translation against the scale it reads
+*back* from the transform, never the one it asked for: at a limit those differ, and
+using the requested value slides the canvas out from under a pinch that can no longer
+zoom. `CanvasZoomUITests` drives real pinches and reads the result off the zoom pill.
+
+---
+
+## The paper's dot grid
+
+`CanvasBackgroundView` draws the white sheet and its dots, and the dots live at fixed
+**canvas** coordinates — they pan and zoom with the ink, so zooming magnifies the
+paper instead of sliding the drawing across a static backdrop. The maths is in
+`CanvasGrid`, kept pure and unit-tested:
+
+- **Zoomed out, the grid coarsens by doubling** rather than drawing every dot. At 10%
+  a literal 24pt grid is 2.4pt apart — six figures of dots per screen. Doubling keeps
+  the survivors on coordinates the finer grid also used, so dots thin out instead of
+  shifting.
+- **Dot radius tracks the zoom but is clamped** at both ends: never a blob, never
+  sub-pixel.
+- Row and column positions come from `firstDotOffset(translation:spacing:)` — the
+  pattern repeats every `spacing`, so only its phase inside the first cell matters.
+
+---
+
 ## Zoom and ink weight
 
 Stroke widths are stored in **canvas** space, like every coordinate. Anything that
@@ -314,7 +348,10 @@ would be claiming a nib that isn't there.
 | Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift` |
 | Change how ink weight responds to zoom | `CanvasTransform.toScreen(length:)` |
 | Change the hover preview's look | `PencilHoverDotView.swift`; its size and colour come from `CanvasViewModel.pencilPreviewDiameter` / `pencilPreviewColor` |
-| Change canvas background | `CanvasBackgroundView` in `CanvasContainerView.swift` (white in both colour schemes — it is paper, not chrome) |
+| Change canvas background | `CanvasBackgroundView.swift` (white in both colour schemes — it is paper, not chrome) |
+| Change the grid's spacing, density or dot size | `CanvasGrid.swift` |
+| Change the zoom limits | `minimumScale` / `maximumScale` in `CanvasTransform.swift` |
+| Change what Apple Pencil's double tap does | `CanvasViewModel.togglePencilShortcutTool()` |
 | Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, add to `ExportSheetView.adapters` |
 | Change the glass chrome style | `View+GlassChrome.swift` |
 | Change preset colors | `presetColors` array in `ColorPresetGrid.swift` |
