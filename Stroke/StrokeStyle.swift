@@ -29,4 +29,35 @@ struct StrokeStyle: Codable, Sendable {
 
 enum ToolType: String, CaseIterable, Codable, Sendable {
     case pen, pencil, marker, eraser, lasso
+
+    /// Tools that lay down ink. Only these carry a stroke colour, so the colour
+    /// picker shows nothing selected while any other tool is active.
+    static let drawingTools: [ToolType] = allCases.filter(\.isDrawingTool)
+
+    var isDrawingTool: Bool {
+        switch self {
+        case .pen, .pencil, .marker: true
+        case .eraser, .lasso: false
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .pen: "pencil.tip"
+        case .pencil: "pencil"
+        case .marker: "highlighter"
+        case .eraser: "eraser"
+        case .lasso: "lasso"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .pen: "Pen"
+        case .pencil: "Pencil"
+        case .marker: "Marker"
+        case .eraser: "Eraser"
+        case .lasso: "Lasso"
+        }
+    }
 }

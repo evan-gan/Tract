@@ -2,23 +2,25 @@ import SwiftUI
 
 /// File browser / home screen. Displays all saved documents and lets the user
 /// open or create new ones.
+///
+/// Opening a document presents the canvas full screen rather than in a split
+/// view detail column: the canvas owns all four screen edges (the tool dock
+/// parks against any of them), and a split view's sidebar would both cover the
+/// dock in portrait and swallow drags aimed at it.
 struct DocumentListView: View {
     @State private var store = DocumentStore()
-    @State private var selectedDocument: SplineDocument?
+    @State private var openDocument: SplineDocument?
     @State private var documentToDelete: SplineDocument?
     @State private var isShowingDeleteConfirmation = false
 
     var body: some View {
-        NavigationSplitView {
+        NavigationStack {
             documentList
                 .navigationTitle("Documents")
                 .toolbar { newDocumentButton }
-        } detail: {
-            if let document = selectedDocument {
-                CanvasContainerView()
-            } else {
-                ContentUnavailableView("Select a document", systemImage: "doc.text")
-            }
+        }
+        .fullScreenCover(item: $openDocument) { _ in
+            CanvasContainerView(onClose: { openDocument = nil })
         }
         .task { await store.loadAllDocuments() }
     }
@@ -26,15 +28,25 @@ struct DocumentListView: View {
     // MARK: - Subviews
 
     private var documentList: some View {
-        List(store.documents, selection: $selectedDocument) { document in
-            DocumentListRow(document: document)
-                .tag(document)
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button("Delete", role: .destructive) {
-                        documentToDelete = document
-                        isShowingDeleteConfirmation = true
-                    }
+        List(store.documents) { document in
+            Button {
+                openDocument = document
+            } label: {
+                DocumentListRow(document: document)
+            }
+            .buttonStyle(.plain)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button("Delete", role: .destructive) {
+                    documentToDelete = document
+                    isShowingDeleteConfirmation = true
                 }
+            }
+        }
+        .overlay {
+            if store.documents.isEmpty {
+                ContentUnavailableView("No documents", systemImage: "doc.text",
+                                       description: Text("Tap + to start drawing."))
+            }
         }
         .confirmationDialog(
             "Delete \"\(documentToDelete?.title ?? "")\"?",
@@ -60,17 +72,9 @@ struct DocumentListView: View {
 
     private func createDocument() {
         Task {
-            let doc = await store.createDocument()
-            selectedDocument = doc
+            openDocument = await store.createDocument()
         }
     }
-}
-
-// MARK: - SplineDocument: Hashable for NavigationSplitView selection
-
-extension SplineDocument: Hashable {
-    static func == (lhs: SplineDocument, rhs: SplineDocument) -> Bool { lhs.id == rhs.id }
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 #Preview {

@@ -7,14 +7,13 @@ struct CanvasTransform: Sendable {
     var scale: CGFloat = 1.0
     var translation: CGPoint = .zero
 
-    /// The affine transform that maps canvas space → screen space.
-    /// Order matters: scale first, then translate. This gives `p' = p*scale + translation`,
-    /// which is what the zoom formula assumes. Reversed order would scale the translation
-    /// offset too, making zoom anchoring incorrect.
+    /// The affine transform that maps canvas space → screen space: `p' = p*scale + translation`.
+    /// Built directly rather than via .scaledBy().translatedBy() because CGAffineTransformTranslate
+    /// multiplies tx/ty by the existing scale (new_tx = old_tx + dx * a), which would make
+    /// the stored translation mean screen-space-offset-divided-by-scale — not what the
+    /// pinch formula or toCanvas/toScreen callers expect.
     var matrix: CGAffineTransform {
-        CGAffineTransform.identity
-            .scaledBy(x: scale, y: scale)
-            .translatedBy(x: translation.x, y: translation.y)
+        CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: translation.x, ty: translation.y)
     }
 
     /// Convert a screen-space point to canvas space (for pencil input).
@@ -25,14 +24,6 @@ struct CanvasTransform: Sendable {
     /// Convert a canvas-space point to screen space (for rendering).
     func toScreen(_ canvasPoint: CGPoint) -> CGPoint {
         canvasPoint.applying(matrix)
-    }
-
-    /// Zoom about a fixed screen point so that point stays under the finger.
-    mutating func zoom(by factor: CGFloat, around screenAnchor: CGPoint) {
-        // Translate so the anchor is at the origin, scale, translate back.
-        translation.x = screenAnchor.x + (translation.x - screenAnchor.x) * factor
-        translation.y = screenAnchor.y + (translation.y - screenAnchor.y) * factor
-        scale *= factor
     }
 
 }

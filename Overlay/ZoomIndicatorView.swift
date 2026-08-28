@@ -10,11 +10,11 @@ struct ZoomIndicatorView: View {
             Text(scale, format: .percent.precision(.fractionLength(0)))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
-        .glassCard(cornerRadius: 10)
+        .glassChrome(cornerRadius: 18, isInteractive: true)
         .accessibilityLabel("Zoom \(Int(scale * 100))%. Tap to reset.")
     }
 }

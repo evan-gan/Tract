@@ -1,0 +1,11 @@
+{
+  "name": "liquid-glass",
+  "description": "Build and migrate iOS, macOS, iPadOS, watchOS, tvOS, and visionOS apps with Apple's Liquid Glass design system. Covers all SwiftUI glass APIs, migration workflows, platform-specific patterns, and real-world examples from Apple's Landmarks sample app.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Haider"
+  },
+  "repository": "https://github.com/haider-nawaz/liquid-glass-skill",
+  "license": "MIT",
+  "keywords": ["swiftui", "liquid-glass", "ios26", "macos26", "apple", "wwdc25", "migration", "design-system"]
+}

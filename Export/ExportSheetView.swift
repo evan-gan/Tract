@@ -36,6 +36,9 @@ struct ExportSheetView: View {
                 }
             }
         }
+        // A partial-height detent is what makes the system give the sheet its
+        // Liquid Glass background; never set presentationBackground alongside it.
+        .presentationDetents([.medium, .large])
     }
 
     private func runExport(using adapter: any ExportAdapter) {

@@ -3,6 +3,58 @@ name: coding-standards
 description: Apply project coding standards when writing, reviewing, or modifying code. Use this skill whenever you are writing new code, editing existing code, creating components, reviewing a PR, refactoring, or setting up a new project. This includes any task that produces code as output — functions, modules, components, scripts, tests, or configuration files. Trigger this skill even for small changes like adding a helper function or renaming a variable.
 ---
 
+# Tract — Build & Tooling
+
+Tract is an iPad-only SwiftUI drawing app (iOS 26, Swift 6.2). **Xcode never needs to
+be opened.** Everything below runs headless from the shell.
+
+## Build commands
+
+```bash
+# Compile / type-check (unsigned, generic iOS device). The fast inner loop.
+./scripts/build.sh
+./scripts/build.sh clean      # wipe build/ first
+
+# Build signed and install on a connected, unlocked iPad
+./scripts/deploy-device.sh [DEVICE-UDID]
+
+# Unit + UI tests on an iPad simulator
+./scripts/test.sh ["iPad Pro 11-inch (M5)"]
+```
+
+`scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
+produces nothing installable. Use `deploy-device.sh` to actually run it on hardware.
+
+## Project generation
+
+`Tract.xcodeproj` is **generated and gitignored** — never edit it, and never
+hand-maintain a file list. Source files are picked up by directory from
+`project.yml`, so a new `.swift` file under an existing folder needs no config
+change. The build scripts run `xcodegen generate` automatically; run it by hand
+after editing `project.yml`:
+
+```bash
+xcodegen generate
+```
+
+New top-level source folders must be added to `targets.Tract.sources` in `project.yml`.
+
+## Signing config
+
+Team ID and bundle prefix live in `Local.xcconfig` (gitignored); copy
+`Local.xcconfig.example` on a fresh checkout. Bundle id is `$(BUNDLE_PREFIX).app`.
+The signing private key lives in the login keychain — no secrets in the repo.
+
+## One-time setup
+
+- Xcode installed and selected: `xcode-select -p` must print
+  `/Applications/Xcode.app/Contents/Developer`
+- `brew install xcodegen`
+- Apple ID with a paid Developer Program membership added in Xcode → Settings → Accounts
+- `cp Local.xcconfig.example Local.xcconfig` and fill in `DEVELOPMENT_TEAM`
+
+---
+
 # Coding Standards
 
 Follow these standards for every coding task.

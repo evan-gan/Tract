@@ -18,10 +18,14 @@ final class CanvasUIView: UIView {
     // a separate pan recognizer and the pinch recognizer.
     private let pinchGesture = UIPinchGestureRecognizer()
 
-    // Previous frame screen positions of the two pinch fingers.
-    // Updated synchronously each frame so incremental deltas are always correct.
-    private var pinchPrev0: CGPoint = .zero
-    private var pinchPrev1: CGPoint = .zero
+    // Canvas-space positions of the two fingers captured at gesture start.
+    // Held fixed for the duration of the gesture; each frame solves for the
+    // transform that maps these canvas points back to the current finger positions.
+    private var pinchCanvasAnchor0: CGPoint = .zero
+    private var pinchCanvasAnchor1: CGPoint = .zero
+    // Explicit validity flag — avoids stale values from a previous gesture
+    // being used when .began fires with only 1 touch and our guard exits early.
+    private var pinchAnchorsValid = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -135,44 +139,52 @@ final class CanvasUIView: UIView {
     // MARK: - Pinch gesture (handles pan + zoom)
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-        guard let viewModel, gesture.numberOfTouches == 2 else { return }
+        guard let viewModel else { return }
+
+        // Invalidate anchors on gesture end so stale values can't bleed
+        // into the next gesture. Must happen before the numberOfTouches
+        // guard because terminal states often report fewer than 2 touches.
+        guard gesture.state == .began || gesture.state == .changed else {
+            pinchAnchorsValid = false
+            return
+        }
+
+        guard gesture.numberOfTouches == 2 else { return }
 
         let curr0 = gesture.location(ofTouch: 0, in: self)
         let curr1 = gesture.location(ofTouch: 1, in: self)
 
-        switch gesture.state {
-        case .began:
-            // Seed previous positions synchronously so the first .changed frame
-            // has valid data without depending on an async Task having run first.
-            pinchPrev0 = curr0
-            pinchPrev1 = curr1
-
-        case .changed:
-            // Capture and advance the stored positions before spawning the Task
-            // so that each frame's delta is independent of Task scheduling.
-            let prev0 = pinchPrev0
-            let prev1 = pinchPrev1
-            pinchPrev0 = curr0
-            pinchPrev1 = curr1
-
-            let prevDist = prev0.distance(to: prev1)
-            guard prevDist > 0 else { return }
-
-            let scaleFactor = curr0.distance(to: curr1) / prevDist
-            let midPrev = prev0.midpoint(to: prev1)
-            let midCurr = curr0.midpoint(to: curr1)
-
-            Task { @MainActor in
-                // Scale around the previous finger midpoint, keeping that
-                // canvas point fixed under the fingers.
-                viewModel.canvasTransform.zoom(by: scaleFactor, around: midPrev)
-                // Then translate so the midpoint follows the fingers' movement.
-                viewModel.canvasTransform.translation.x += midCurr.x - midPrev.x
-                viewModel.canvasTransform.translation.y += midCurr.y - midPrev.y
+        // All transform reads AND writes happen synchronously on the main
+        // thread via assumeIsolated. Using async Tasks caused a race where
+        // anchor capture read a stale transform that hadn't been updated by
+        // the previous frame's queued Task yet.
+        MainActor.assumeIsolated {
+            // Capture anchors if not yet valid. Handles both:
+            //   1. Normal: .began with 2 touches.
+            //   2. Fallback: .began had 1 touch, so we capture lazily here.
+            // First-frame computation is a no-op (produces the same transform).
+            if !pinchAnchorsValid {
+                pinchCanvasAnchor0 = viewModel.canvasTransform.toCanvas(curr0)
+                pinchCanvasAnchor1 = viewModel.canvasTransform.toCanvas(curr1)
+                pinchAnchorsValid = true
             }
 
-        default:
-            break
+            guard gesture.state == .changed else { return }
+
+            let a0 = pinchCanvasAnchor0
+            let a1 = pinchCanvasAnchor1
+            let canvasDist = a0.distance(to: a1)
+            guard canvasDist > 0 else { return }
+
+            // Solve for the unique scale+translation that places canvas point
+            // a0 at screen position curr0 and a1 at curr1. Absolute, not
+            // incremental, so floating-point errors cannot accumulate.
+            let newScale = curr0.distance(to: curr1) / canvasDist
+            viewModel.canvasTransform.scale = newScale
+            viewModel.canvasTransform.translation = CGPoint(
+                x: curr0.x - a0.x * newScale,
+                y: curr0.y - a0.y * newScale
+            )
         }
     }
 }
@@ -184,7 +196,7 @@ extension CanvasUIView: UIPencilInteractionDelegate {
         // Cycle to the next tool on Pencil Pro squeeze.
         Task { @MainActor in
             guard let viewModel else { return }
-            let tools = ToolType.allCases.filter { $0 != .lasso && $0 != .eraser }
+            let tools = ToolType.drawingTools
             let currentIndex = tools.firstIndex(of: viewModel.activeTool) ?? 0
             let nextIndex = (currentIndex + 1) % tools.count
             viewModel.activeTool = tools[nextIndex]

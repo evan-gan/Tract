@@ -1,0 +1,107 @@
+name: Tract
+options:
+  bundleIdPrefix: com.spline
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  # Schemes must be shared so xcodebuild can find them without Xcode's user state.
+  generateEmptyDirectories: false
+
+# Team ID and bundle prefix live outside git — see Local.xcconfig.example.
+configFiles:
+  Debug: Local.xcconfig
+  Release: Local.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "6.2"
+    SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+    ALWAYS_SEARCH_USER_PATHS: NO
+    CLANG_ENABLE_MODULES: YES
+    CLANG_ENABLE_OBJC_ARC: YES
+    GCC_WARN_ABOUT_RETURN_TYPE: YES_ERROR
+    GCC_WARN_UNINITIALIZED_AUTOS: YES_AGGRESSIVE
+    GCC_WARN_UNUSED_FUNCTION: YES
+    GCC_WARN_UNUSED_VARIABLE: YES
+    CLANG_WARN_UNREACHABLE_CODE: YES
+    CLANG_WARN_INFINITE_RECURSION: YES
+  configs:
+    Debug:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      MTL_ENABLE_DEBUG_INFO: NO
+
+targets:
+  Tract:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Canvas
+      - ColorPanel
+      - Document
+      - Export
+      - Overlay
+      - ToolDock
+      - Stroke
+      - Toolbar
+      - Utilities
+      - Assets.xcassets
+      - Persistence.xcdatamodeld
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_PREFIX).app
+        PRODUCT_NAME: $(TARGET_NAME)
+        TARGETED_DEVICE_FAMILY: "2"   # iPad only
+        CODE_SIGN_STYLE: Automatic
+        # Simulator builds sign ad-hoc so they never need a provisioning profile.
+        "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "-"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+        GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIRequiresFullScreen: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
+    # Unit tests run from the app's own scheme: `./scripts/test.sh`.
+    scheme:
+      testTargets:
+        - TractTests
+        - TractUITests
+
+  TractTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - target: Tract
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_PREFIX).tests
+        TARGETED_DEVICE_FAMILY: "2"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "-"
+
+  TractUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: Tract
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_PREFIX).uitests
+        TARGETED_DEVICE_FAMILY: "2"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "-"

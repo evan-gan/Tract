@@ -12,9 +12,32 @@ final class CanvasViewModel {
 
     // MARK: - Tool state
     var activeTool: ToolType = .pen
-    var strokeColor: SIMD4<Float> = SIMD4(0, 0, 0, 1)
+    var strokeColor: SIMD4<Float> = InkColor.white
     var strokeWidth: CGFloat = 2.0
     var strokeOpacity: CGFloat = 1.0
+
+    /// Remembered so picking a colour while the eraser or lasso is active can
+    /// put the user back on the pen they were last drawing with.
+    private var lastDrawingTool: ToolType = .pen
+
+    /// The ink colour the picker should mark as selected, or `nil` when the
+    /// active tool lays down no ink and therefore has no colour.
+    var selectedInkColor: SIMD4<Float>? {
+        activeTool.isDrawingTool ? strokeColor : nil
+    }
+
+    func selectTool(_ tool: ToolType) {
+        if tool.isDrawingTool { lastDrawingTool = tool }
+        activeTool = tool
+    }
+
+    /// Picking a colour implies drawing with it, so a non-drawing tool hands
+    /// back to the last pen rather than leaving the choice with no effect.
+    func selectInkColor(_ color: SIMD4<Float>) {
+        strokeColor = color
+        if !activeTool.isDrawingTool { activeTool = lastDrawingTool }
+    }
+
 
     // MARK: - Canvas navigation
     var canvasTransform = CanvasTransform()
@@ -23,8 +46,25 @@ final class CanvasViewModel {
     var isSelectionMode: Bool = false
     var selectedStrokeIDs: Set<UUID> = []
 
-    // MARK: - Color panel visibility
+    // MARK: - Palette flyout visibility
+    // Only one palette flyout may be open at a time, so both flags live here
+    // rather than in the buttons that trigger them.
     var isColorPanelVisible: Bool = false
+    var isStrokeWeightFlyoutVisible: Bool = false
+
+    func toggleColorPanel() {
+        withAnimation(.spring(duration: 0.3)) {
+            isStrokeWeightFlyoutVisible = false
+            isColorPanelVisible.toggle()
+        }
+    }
+
+    func toggleStrokeWeightFlyout() {
+        withAnimation(.spring(duration: 0.3)) {
+            isColorPanelVisible = false
+            isStrokeWeightFlyoutVisible.toggle()
+        }
+    }
 
     // MARK: - Undo / redo
     private var undoStack: [[Stroke]] = []

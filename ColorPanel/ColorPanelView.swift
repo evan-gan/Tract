@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Floating color panel to the right of the palette. Assembles preset grid,
-/// custom color row, and opacity slider.
+/// Full colour panel, shown in a popover from the dock's colour wheel. It draws
+/// no background of its own — the popover supplies the glass.
 struct ColorPanelView: View {
     @Bindable var viewModel: CanvasViewModel
     @State private var activePresetIndex: Int? = 0
@@ -28,8 +28,7 @@ struct ColorPanelView: View {
 
             OpacitySlider(opacity: $viewModel.strokeOpacity)
         }
-        .padding(14)
-        .frame(width: 196)
-        .glassCard(cornerRadius: 16)
+        .padding(16)
+        .frame(width: 210)
     }
 }

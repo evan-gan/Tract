@@ -3,8 +3,18 @@ import SwiftUI
 /// Root of the drawing screen. The only view that imports from multiple feature folders.
 /// It composes every major UI region without containing logic of its own.
 struct CanvasContainerView: View {
+    /// Closes the canvas and returns to the document list.
+    var onClose: () -> Void = {}
+
     @State private var viewModel = CanvasViewModel()
     @State private var isExportSheetPresented = false
+
+    /// Shared by every chrome surface so they morph into one another instead of
+    /// cross-fading when panels open and close.
+    @Namespace private var glassNamespace
+
+    /// Measured so a top-parked dock can settle below the title row.
+    @State private var topChromeHeight: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -14,10 +24,13 @@ struct CanvasContainerView: View {
                 activeStroke: viewModel.activeStroke,
                 transform: viewModel.canvasTransform
             )
+            .ignoresSafeArea()
             CanvasView(viewModel: viewModel)
+                .ignoresSafeArea()
+            // Chrome deliberately keeps the safe area: it is what stops the
+            // dock from parking under the status bar or the home indicator.
             overlayChrome
         }
-        .ignoresSafeArea()
         .sheet(isPresented: $isExportSheetPresented) {
             ExportSheetView(document: currentDocument())
         }
@@ -30,40 +43,57 @@ struct CanvasContainerView: View {
             .ignoresSafeArea()
     }
 
+    /// All floating controls. They share a single `GlassEffectContainer` because
+    /// glass cannot sample other glass — separate containers would render the
+    /// surfaces inconsistently and cost one backdrop layer each.
     private var overlayChrome: some View {
         ZStack {
-            VStack {
-                TopBarView(
-                    viewModel: viewModel,
-                    onExportTapped: { isExportSheetPresented = true }
-                )
-                .padding(.top, 12)
-                Spacer()
-            }
+            GlassEffectContainer(spacing: 20) {
+                ZStack {
+                    VStack {
+                        topChromeRow
+                        Spacer()
+                    }
 
-            HStack {
-                PaletteView(viewModel: viewModel)
-                    .padding(.leading, 12)
-                Spacer()
-            }
-
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    ZoomIndicatorView(
-                        scale: viewModel.canvasTransform.scale,
-                        onReset: viewModel.resetZoom
+                    FloatingToolDock(
+                        viewModel: viewModel,
+                        glassNamespace: glassNamespace,
+                        topReserved: topChromeHeight
                     )
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 16)
                 }
             }
 
+            // Selection chrome tracks canvas content, so it stays outside the
+            // glass container and never takes a glass material.
             if viewModel.isSelectionMode {
                 SelectionBoxView(selectedStrokes: selectedStrokes())
             }
         }
+    }
+
+    /// Title bar centred, zoom pill pinned trailing. Keeping both in one fixed
+    /// row leaves every other edge free for the movable dock.
+    private var topChromeRow: some View {
+        ZStack {
+            TopBarView(
+                viewModel: viewModel,
+                glassNamespace: glassNamespace,
+                onClose: onClose,
+                onExportTapped: { isExportSheetPresented = true }
+            )
+
+            HStack {
+                Spacer()
+                ZoomIndicatorView(
+                    scale: viewModel.canvasTransform.scale,
+                    onReset: viewModel.resetZoom
+                )
+                .glassEffectID("zoomIndicator", in: glassNamespace)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topChromeHeight = $0 }
     }
 
     // MARK: - Helpers
