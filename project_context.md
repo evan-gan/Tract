@@ -49,7 +49,9 @@ Tract/
 ├── Canvas/                       # Core drawing engine
 │   ├── CanvasContainerView.swift # Root screen — composes everything, owns CanvasViewModel
 │   ├── CanvasView.swift          # UIViewRepresentable wrapper (no logic)
-│   ├── CanvasUIView.swift        # UIView — pencil touches, pan/pinch, pencil hover tracking
+│   ├── CanvasUIView.swift        # UIView — pencil touches, 1-finger pan, pinch, pencil hover
+│   ├── FingerPanGestureRecognizer.swift # One-finger canvas pan; palm-rejecting
+│   ├── FingerPanArbiter.swift    # Pure palm-vs-finger rules behind that recognizer
 │   ├── CanvasRenderer.swift      # SwiftUI Canvas — strokes → screen paths
 │   ├── CanvasBackgroundView.swift # White paper + dot grid, both tracking the transform
 │   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, pan phase
@@ -226,8 +228,9 @@ blank paper. Rules:
   selection stays glued to the nib or finger even if the canvas is zoomed mid-drag.
 - **The finger drag refuses to begin off the selection.** `CanvasUIView` overrides
   `gestureRecognizerShouldBegin` for its pan recognizer; that is what leaves every
-  other finger touch free for pan and zoom. It is capped at one touch, so a second
-  finger hands the gesture back to the pinch.
+  other finger touch free to pan the canvas instead. It is capped at one touch, so a
+  second finger hands the gesture back to the pinch. The mirror image of the same
+  gate stops the one-finger canvas pan from starting *on* the selection.
 
 ---
 
@@ -363,11 +366,59 @@ Apple Pencil → UIView.touchesBegan/Moved/Ended
 One finger on an existing selection → UIPanGestureRecognizer (finger only, 1 touch)
   → gated by gestureRecognizerShouldBegin → CanvasViewModel.beginSelectionDrag(at:)
 One finger tapping elsewhere → UITapGestureRecognizer → CanvasViewModel.clearSelection()
+One finger dragging blank paper → FingerPanGestureRecognizer (palm-rejecting)
+  → CanvasTransform.translation, solved so the anchored canvas point stays under it
+Two fingers → UIPinchGestureRecognizer (handles pan *and* zoom in one recognizer)
 
 Apple Pencil hovering (not touching) → UIHoverGestureRecognizer (pencil touch type only)
   → CanvasViewModel.updatePencilHover(to:)   ← screen space, cleared on touch-down
   → PencilHoverDotView
 ```
+
+---
+
+## Panning with one finger, palm down
+
+`FingerPanGestureRecognizer` exists because `UIPanGestureRecognizer` cannot express
+what a drawing app needs: it tracks whatever touches it is handed, so a palm resting
+on the paper either counts towards its touch limits or drags the canvas by itself.
+The custom recognizer watches every contact and gives the pan to the one that is
+actually moving. The rules are pure and unit-tested in `FingerPanArbiter`:
+
+- **Contacts wider than 60pt are dropped outright.** A fingertip reports roughly
+  10–30pt; a palm or forearm is far wider. The reported `majorRadiusTolerance` is
+  subtracted first, and the threshold is deliberately loose: the same test gates
+  which touches the *pinch* may see, and refusing one finger of a real pinch is a
+  far worse failure than letting a palm through to the movement test. The width test
+  is re-run on every move, because a contact can start small and spread as the hand
+  settles.
+- **Whatever slips past the width test is caught by movement.** A resting limb does
+  not travel; the finger drawing the pan does. Exactly one contact past the 8pt
+  threshold starts a pan and every other contact is then ignored, so `location(in:)`
+  reports the moving finger alone. Two or more moving contacts is a pinch, and the
+  recognizer fails so `UIPinchGestureRecognizer` owns them.
+- **A fingertip arriving mid-pan ends the pan**, handing both touches to the pinch.
+- **The pan and the pinch are allowed to recognize simultaneously**, and this is not
+  optional. By default the first recognizer to recognize prevents the others sharing
+  its touches, so a finger that panned even briefly before the second one landed
+  killed the pinch for the rest of that touch sequence — a pinch that only worked
+  when both fingers happened to land together. With simultaneity allowed the pinch is
+  always available, and the pan stands down instead: it ends when a second fingertip
+  arrives, and `handleFingerPan` drops any frame that arrives while the pinch is
+  live, so only one of them ever writes the transform.
+
+The same width test is applied through `UIGestureRecognizerDelegate.shouldReceive` to
+the pinch, selection-drag and deselect-tap recognizers. Without it a resting palm is
+a second contact, and palm-plus-finger reads as a pinch that throws the canvas across
+the screen.
+
+The pan is gated by `gestureRecognizerShouldBegin` on the recognizer's
+`initialLocation`, not its current one: a finger that *landed* on a selection is
+moving the selection, not the paper under it.
+
+Like the pinch, the handler solves for the transform that puts an anchored canvas
+point back under the finger rather than accumulating frame-to-frame translations, so
+a pan interrupted by a zoom cannot drift.
 
 ---
 
@@ -392,7 +443,7 @@ paper instead of sliding the drawing across a static backdrop. The maths is in
 `CanvasGrid`, kept pure and unit-tested:
 
 - **Zoomed out, the grid coarsens by doubling** rather than drawing every dot. At 10%
-  a literal 24pt grid is 2.4pt apart — six figures of dots per screen. Doubling keeps
+  a literal 48pt grid is 4.8pt apart — tens of thousands of dots per screen. Doubling keeps
   the survivors on coordinates the finer grid also used, so dots thin out instead of
   shifting.
 - **Dot radius tracks the zoom but is clamped** at both ends: never a blob, never
@@ -454,6 +505,7 @@ would be claiming a nib that isn't there.
 | Change the hover preview's look | `PencilHoverDotView.swift`; its size and colour come from `CanvasViewModel.pencilPreviewDiameter` / `pencilPreviewColor` |
 | Change canvas background | `CanvasBackgroundView.swift` (white in both colour schemes — it is paper, not chrome) |
 | Change the grid's spacing, density or dot size | `CanvasGrid.swift` |
+| Change how the canvas is panned, or tune palm rejection | `FingerPanArbiter.swift` for the thresholds and rules; `FingerPanGestureRecognizer.swift` for the touch bookkeeping |
 | Change the zoom limits | `minimumScale` / `maximumScale` in `CanvasTransform.swift` |
 | Change what Apple Pencil's double tap does | `CanvasViewModel.togglePencilShortcutTool()` |
 | Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, add to `ExportSheetView.adapters` |

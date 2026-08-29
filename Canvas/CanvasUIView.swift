@@ -6,7 +6,7 @@ import UIKit
 
 /// UIView subclass responsible for four things only:
 ///   1. Routing Apple Pencil touches to the view model.
-///   2. Handling two-finger pan and pinch-to-zoom gestures.
+///   2. Handling one-finger pan, two-finger pan, and pinch-to-zoom gestures.
 ///   3. Tracking where the pencil hovers, so the canvas can preview the nib.
 ///   4. Letting one finger move — or a tap dismiss — a lasso selection.
 ///
@@ -19,6 +19,10 @@ final class CanvasUIView: UIView {
     // two-finger canvas navigation, eliminating any interference between
     // a separate pan recognizer and the pinch recognizer.
     private let pinchGesture = UIPinchGestureRecognizer()
+
+    // One finger drags the paper. Palm rejection lives inside the recognizer, so
+    // a hand can rest on the canvas while a finger elsewhere pans it.
+    private let fingerPanGesture = FingerPanGestureRecognizer(target: nil, action: nil)
 
     // Reports the pencil's position while it is near the glass but not touching,
     // which is what drives the hover preview dot.
@@ -42,6 +46,11 @@ final class CanvasUIView: UIView {
     // being used when .began fires with only 1 touch and our guard exits early.
     private var pinchAnchorsValid = false
 
+    // Canvas-space point sitting under the panning finger, captured when the pan
+    // begins. Solving against it each frame keeps that point glued to the finger.
+    private var fingerPanCanvasAnchor: CGPoint = .zero
+    private var fingerPanAnchorValid = false
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         configureGestures()
@@ -59,8 +68,15 @@ final class CanvasUIView: UIView {
         // Restrict to finger touches only so the recognizer doesn't eat pencil input.
         let fingerTouchType = NSNumber(value: UITouch.TouchType.direct.rawValue)
         pinchGesture.allowedTouchTypes = [fingerTouchType]
+        pinchGesture.delegate = self
         pinchGesture.addTarget(self, action: #selector(handlePinch(_:)))
         addGestureRecognizer(pinchGesture)
+
+        // Touch types are set by the recognizer itself; it must see palms in order
+        // to reject them, which is why it is not filtered down to fingertips here.
+        fingerPanGesture.delegate = self
+        fingerPanGesture.addTarget(self, action: #selector(handleFingerPan(_:)))
+        addGestureRecognizer(fingerPanGesture)
 
         // Pencil only: a trackpad pointer also produces hover events, and a preview
         // dot chasing the cursor would be claiming a nib that isn't there.
@@ -78,6 +94,7 @@ final class CanvasUIView: UIView {
         addGestureRecognizer(selectionPanGesture)
 
         deselectTapGesture.allowedTouchTypes = [fingerTouchType]
+        deselectTapGesture.delegate = self
         deselectTapGesture.addTarget(self, action: #selector(handleDeselectTap(_:)))
         addGestureRecognizer(deselectTapGesture)
     }
@@ -207,17 +224,66 @@ final class CanvasUIView: UIView {
     /// Refusing to begin here rather than bailing out in the handler is what
     /// leaves every other finger touch free for pan and zoom.
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard gestureRecognizer === selectionPanGesture, let viewModel else {
+        guard let viewModel else {
             return super.gestureRecognizerShouldBegin(gestureRecognizer)
         }
-        return MainActor.assumeIsolated {
-            viewModel.selectionContains(
-                viewModel.canvasTransform.toCanvas(gestureRecognizer.location(in: self))
-            )
+        switch gestureRecognizer {
+        case selectionPanGesture:
+            return startsOnSelection(gestureRecognizer.location(in: self), viewModel: viewModel)
+        case fingerPanGesture:
+            // A finger that landed on the selection is moving the selection, not
+            // the paper underneath it.
+            return !startsOnSelection(fingerPanGesture.initialLocation, viewModel: viewModel)
+        default:
+            return super.gestureRecognizerShouldBegin(gestureRecognizer)
+        }
+    }
+
+    private func startsOnSelection(_ screenLocation: CGPoint, viewModel: CanvasViewModel) -> Bool {
+        MainActor.assumeIsolated {
+            viewModel.selectionContains(viewModel.canvasTransform.toCanvas(screenLocation))
+        }
+    }
+
+    // MARK: - One-finger pan
+
+    /// Drags the paper under the finger. Like the pinch, it solves for the
+    /// transform that puts the anchored canvas point back under the touch rather
+    /// than accumulating the recognizer's frame-to-frame translation, so a pan
+    /// interrupted by a zoom cannot drift.
+    @objc private func handleFingerPan(_ gesture: FingerPanGestureRecognizer) {
+        guard let viewModel else { return }
+        // Both recognizers are allowed to run at once so neither can lock the other
+        // out, which makes the pinch the tie-breaker: while it is driving the
+        // transform, a leftover pan frame would fight it for the same translation.
+        guard !isPinchActive else {
+            fingerPanAnchorValid = false
+            return
+        }
+        let screenLocation = gesture.location(in: self)
+        MainActor.assumeIsolated {
+            switch gesture.state {
+            case .began:
+                fingerPanCanvasAnchor = viewModel.canvasTransform.toCanvas(screenLocation)
+                fingerPanAnchorValid = true
+            case .changed:
+                guard fingerPanAnchorValid else { return }
+                let scale = viewModel.canvasTransform.scale
+                viewModel.canvasTransform.translation = CGPoint(
+                    x: screenLocation.x - fingerPanCanvasAnchor.x * scale,
+                    y: screenLocation.y - fingerPanCanvasAnchor.y * scale
+                )
+            default:
+                fingerPanAnchorValid = false
+            }
         }
     }
 
     // MARK: - Pinch gesture (handles pan + zoom)
+
+    private var isPinchActive: Bool {
+        pinchGesture.state == .began || pinchGesture.state == .changed
+    }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
         guard let viewModel else { return }
@@ -276,7 +342,38 @@ final class CanvasUIView: UIView {
 
 // The gate itself is an override of UIView's own hook, which cannot live in an
 // extension — see `gestureRecognizerShouldBegin` above.
-extension CanvasUIView: UIGestureRecognizerDelegate {}
+extension CanvasUIView: UIGestureRecognizerDelegate {
+    /// Keeps palms out of the finger gestures. Without this a resting palm counts
+    /// as a second contact, which would let a hand plus a finger read as a pinch
+    /// and throw the canvas across the screen.
+    ///
+    /// The threshold is deliberately generous — see `FingerPanArbiter` — because a
+    /// touch refused here is invisible to the gesture for the rest of the sequence,
+    /// and losing one finger of a real pinch is far worse than letting a palm
+    /// through to the movement test that backs this up.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldReceive touch: UITouch) -> Bool {
+        guard touch.type == .direct else { return true }
+        return !FingerPanArbiter.isLikelyPalm(majorRadius: touch.majorRadius,
+                                              tolerance: touch.majorRadiusTolerance)
+    }
+
+    /// The one-finger pan must never lock the pinch out.
+    ///
+    /// By default the first recognizer to recognize prevents the others sharing its
+    /// touches — so a finger that panned even briefly before the second one landed
+    /// would kill the pinch for the whole touch sequence, which is exactly the
+    /// "pinch works sometimes" failure. Allowing them to run together means the
+    /// pinch is always available; the pan then stands down on its own (it ends the
+    /// moment a second fingertip arrives, and `handleFingerPan` ignores anything
+    /// that arrives while the pinch is live) so the two never fight over the
+    /// transform.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        let pair = Set([ObjectIdentifier(gestureRecognizer), ObjectIdentifier(other)])
+        return pair == Set([ObjectIdentifier(fingerPanGesture), ObjectIdentifier(pinchGesture)])
+    }
+}
 
 // MARK: - UIPencilInteractionDelegate
 

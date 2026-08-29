@@ -20,13 +20,13 @@ struct CanvasGridTests {
 
     @Test("Zoomed far out the grid coarsens instead of crowding into a texture")
     func zoomingOutCoarsensTheGrid() {
-        // A literal 24pt grid at 10% would put dots 2.4pt apart.
+        // A literal 48pt grid at 10% would put dots 4.8pt apart.
         let spacing = CanvasGrid.screenSpacing(atScale: 0.1)
         #expect(spacing >= CanvasGrid.minimumScreenSpacing)
         // Coarsening doubles, so the surviving dots stay on canvas coordinates
         // the finer grid used too — they thin out, they do not shift.
         let coarseningFactor = spacing / (CanvasGrid.canvasSpacing * 0.1)
-        #expect(coarseningFactor == 8)
+        #expect(coarseningFactor == 4)
     }
 
     @Test("The coarsened spacing is the smallest doubling that clears the minimum")

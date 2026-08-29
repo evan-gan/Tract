@@ -7,12 +7,12 @@ import CoreGraphics
 /// coordinates, so they pan and zoom with the ink drawn on them.
 enum CanvasGrid {
     /// Distance between dots in canvas space.
-    static let canvasSpacing: CGFloat = 24
+    static let canvasSpacing: CGFloat = 48
     static let canvasDotRadius: CGFloat = 1
 
     /// Below this the dots crowd into a texture and the count explodes — at 10%
-    /// zoom a literal 24pt grid would be 2.4pt apart, six figures of dots on an
-    /// iPad screen. The grid coarsens by doubling instead, which keeps the
+    /// zoom a literal 48pt grid would be 4.8pt apart, tens of thousands of dots
+    /// on an iPad screen. The grid coarsens by doubling instead, which keeps the
     /// remaining dots exactly where they were.
     static let minimumScreenSpacing: CGFloat = 12
 
