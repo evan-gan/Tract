@@ -50,7 +50,6 @@ targets:
       - Toolbar
       - Utilities
       - Assets.xcassets
-      - Persistence.xcdatamodeld
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_PREFIX).app

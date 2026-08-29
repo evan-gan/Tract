@@ -26,6 +26,23 @@ final class CanvasSnapshotUITests: XCTestCase {
         attachScreenshot(named: "canvas")
     }
 
+    /// Captures the document library with cards that have real previews on them.
+    ///
+    /// The drawings are seeded by the app on launch rather than drawn here: the
+    /// canvas takes Apple Pencil touches only, and XCUITest cannot produce one.
+    func testCaptureLibrary() {
+        let app = XCUIApplication()
+        app.launchArguments.append("-TractSeedSampleDocuments")
+        app.launch()
+
+        XCTAssertTrue(app.buttons["New document"].firstMatch.waitForExistence(timeout: 15),
+                      "The library should be on screen before the shot is taken.")
+        // Previews are read off disk per card; give them a beat to appear.
+        Thread.sleep(forTimeInterval: 2)
+
+        attachScreenshot(named: "library")
+    }
+
     /// `.keepAlways` matters: without it the attachment is discarded for a
     /// passing test, and the script would find an empty result bundle.
     private func attachScreenshot(named name: String) {

@@ -5,12 +5,13 @@ import SwiftUI
 /// Selection lives on the lasso tool in the dock, not up here.
 /// Undo/redo live on the movable tool dock instead.
 struct TopBarView: View {
+    @Binding var title: String
+    /// Drives the small "saving" dot. Saving is silent and automatic, so this
+    /// is the only signal the user gets that their edit has been recorded.
+    let isSaving: Bool
     let glassNamespace: Namespace.ID
     let onClose: () -> Void
     let onExportTapped: () -> Void
-
-    // Stored separately because the document title lives outside CanvasViewModel.
-    @State private var documentTitle: String = "Untitled"
 
     var body: some View {
         HStack(spacing: 10) {
@@ -29,7 +30,9 @@ struct TopBarView: View {
 
             Divider().frame(height: 20)
 
-            DocumentTitleView(title: $documentTitle)
+            DocumentTitleView(title: $title)
+
+            SaveIndicatorView(isSaving: isSaving)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

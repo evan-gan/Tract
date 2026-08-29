@@ -1,30 +1,21 @@
+import CoreGraphics
 import Foundation
 
-/// Top-level in-memory document model. Lightweight — the canonical persistent
-/// representation lives in Core Data via `DocumentStore`.
+/// A document with its contents loaded: the metadata card plus every stroke.
+/// The library holds `DocumentMetadata` alone; only an open (or exporting)
+/// document is ever inflated into this.
 struct SplineDocument: Identifiable, Sendable {
-    let id: UUID
-    var title: String
-    let createdAt: Date
-    var modifiedAt: Date
-    /// Strokes in `startTime` order, matching Core Data's ordered relationship.
+    var metadata: DocumentMetadata
+    /// Strokes in `startTime` order — the order they were drawn, which is also
+    /// the order they must be painted in.
     var strokes: [Stroke]
-    var canvasOrigin: CGPoint
-    var canvasScale: CGFloat
 
-    init(
-        id: UUID = UUID(),
-        title: String = "Untitled",
-        strokes: [Stroke] = [],
-        canvasOrigin: CGPoint = .zero,
-        canvasScale: CGFloat = 1.0
-    ) {
-        self.id = id
-        self.title = title
-        self.createdAt = .now
-        self.modifiedAt = .now
+    var id: UUID { metadata.id }
+    var title: String { metadata.title }
+    var modifiedAt: Date { metadata.modifiedAt }
+
+    init(metadata: DocumentMetadata = DocumentMetadata(), strokes: [Stroke] = []) {
+        self.metadata = metadata
         self.strokes = strokes
-        self.canvasOrigin = canvasOrigin
-        self.canvasScale = canvasScale
     }
 }

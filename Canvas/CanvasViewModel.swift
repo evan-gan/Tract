@@ -10,6 +10,30 @@ final class CanvasViewModel {
     var strokes: [Stroke] = []
     var activeStroke: Stroke?
 
+    /// Bumped once per committed change to the ink. `DocumentEditorSession`
+    /// watches it to decide when to autosave, so it must be incremented by every
+    /// mutation that a reload has to reproduce — and by nothing else, or the app
+    /// writes to disk while the user is only looking around.
+    private(set) var revision = 0
+
+    private func recordEdit() {
+        revision += 1
+    }
+
+    /// Replaces all canvas state with a document loaded from disk. Undo history
+    /// belongs to the editing session, not the document, so it starts empty:
+    /// there is nothing sensible for a first undo to go back to.
+    func restore(strokes loadedStrokes: [Stroke], origin: CGPoint, scale: CGFloat) {
+        strokes = loadedStrokes
+        activeStroke = nil
+        undoStack.removeAll()
+        redoStack.removeAll()
+        clearSelection()
+        canvasTransform.scale = scale
+        canvasTransform.translation = origin
+        revision = 0
+    }
+
     // MARK: - Tool state
     var activeTool: ToolType = .pen
     // Black by default: the canvas is white paper, so white ink would be invisible.
@@ -159,9 +183,17 @@ final class CanvasViewModel {
         strokesBeforeErase = nil
     }
 
+    /// UIKit refines estimated force/azimuth after the fact, and the update can
+    /// land either while the gesture is still in flight or after it has been
+    /// committed — so patch whichever stroke actually holds that sample.
     func updateEstimatedPoint(updateIndex: Int, with point: StrokePoint) {
+        if activeStroke != nil {
+            activeStroke?.updatePoint(at: updateIndex, with: point)
+            return
+        }
         guard let strokeIndex = strokes.indices.last else { return }
         strokes[strokeIndex].updatePoint(at: updateIndex, with: point)
+        recordEdit()
     }
 
     // MARK: - Pen
@@ -182,6 +214,7 @@ final class CanvasViewModel {
         undoStack.append(strokes)
         redoStack.removeAll()
         strokes.append(stroke)
+        recordEdit()
     }
 
     // MARK: - Eraser
@@ -210,6 +243,7 @@ final class CanvasViewModel {
         guard let before = strokesBeforeErase, before.count != strokes.count else { return }
         undoStack.append(before)
         redoStack.removeAll()
+        recordEdit()
     }
 
     // MARK: - Lasso
@@ -241,6 +275,7 @@ final class CanvasViewModel {
         redoStack.append(strokes)
         strokes = previous
         pruneSelection()
+        recordEdit()
     }
 
     func redo() {
@@ -248,6 +283,7 @@ final class CanvasViewModel {
         undoStack.append(strokes)
         strokes = next
         pruneSelection()
+        recordEdit()
     }
 
     /// Drops selected IDs whose strokes no longer exist after an undo or redo.

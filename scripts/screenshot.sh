@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# scripts/screenshot.sh — captures the canvas on an iPad simulator in light and/or
+# scripts/screenshot.sh — captures a screen on an iPad simulator in light and/or
 # dark appearance. This is how a UI change gets checked without opening Xcode.
 #
-#   ./scripts/screenshot.sh                 # both appearances
-#   ./scripts/screenshot.sh dark            # just dark
+#   ./scripts/screenshot.sh                          # canvas, both appearances
+#   ./scripts/screenshot.sh dark                     # canvas, just dark
+#   ./scripts/screenshot.sh both "" library          # document library
 #   ./scripts/screenshot.sh both "iPad Air 13-inch (M3)"
 #
-# PNGs land in build/screenshots/canvas-<appearance>.png. The capture itself lives
-# in UITests/CanvasSnapshotUITests.swift; this script only sets the appearance,
-# runs it, and digs the attachment out of the result bundle.
+# PNGs land in build/screenshots/<screen>-<appearance>.png. The captures live in
+# UITests/CanvasSnapshotUITests.swift; this script only sets the appearance, runs
+# the right one, and digs the attachment out of the result bundle.
 #
 # Leaves the simulator in the last appearance it captured.
 set -euo pipefail
@@ -22,8 +23,19 @@ case "${1:-both}" in
   *)     fail "Unknown appearance '${1}' — use light, dark, or both." ;;
 esac
 
-SIMULATOR_NAME="${2:-iPad Pro 11-inch (M5)}"
-SNAPSHOT_TEST="TractUITests/CanvasSnapshotUITests"
+SIMULATOR_NAME="${2:-}"
+[ -z "$SIMULATOR_NAME" ] && SIMULATOR_NAME="iPad Pro 11-inch (M5)"
+
+# Each screen is one test method that ends by attaching a screenshot under the
+# screen's own name — that name is how the attachment is found again below.
+SCREEN="${3:-canvas}"
+case "$SCREEN" in
+  canvas)  TEST_METHOD=testCaptureCanvas ;;
+  library) TEST_METHOD=testCaptureLibrary ;;
+  *)       fail "Unknown screen '${SCREEN}' — use canvas or library." ;;
+esac
+
+SNAPSHOT_TEST="TractUITests/CanvasSnapshotUITests/$TEST_METHOD"
 OUTPUT_DIR="$BUILD_DIR/screenshots"
 
 require_xcodegen
@@ -33,11 +45,11 @@ UDID="$(simulator_udid "$SIMULATOR_NAME")"
 boot_simulator "$UDID"
 mkdir -p "$OUTPUT_DIR"
 
-# Runs the capture test once and leaves the PNG at $OUTPUT_DIR/canvas-<appearance>.png.
+# Runs the capture test once and leaves the PNG at $OUTPUT_DIR/$SCREEN-<appearance>.png.
 capture_appearance() {
   local appearance="$1"
-  local result_bundle="$OUTPUT_DIR/$appearance.xcresult"
-  local attachment_dir="$OUTPUT_DIR/$appearance-attachments"
+  local result_bundle="$OUTPUT_DIR/$SCREEN-$appearance.xcresult"
+  local attachment_dir="$OUTPUT_DIR/$SCREEN-$appearance-attachments"
 
   step "Capturing $appearance appearance on $SIMULATOR_NAME"
   xcrun simctl ui "$UDID" appearance "$appearance"
@@ -55,25 +67,26 @@ capture_appearance() {
 
   xcrun xcresulttool export attachments \
     --path "$result_bundle" --output-path "$attachment_dir" >/dev/null
-  extract_screenshot "$attachment_dir" "$OUTPUT_DIR/canvas-$appearance.png"
+  extract_screenshot "$attachment_dir" "$OUTPUT_DIR/$SCREEN-$appearance.png"
 }
 
 # Attachments are exported under UUID filenames; the manifest is what maps them
 # back to the name the test gave them.
 extract_screenshot() {
   local attachment_dir="$1" destination="$2"
-  python3 - "$attachment_dir" "$destination" <<'PY'
+  python3 - "$attachment_dir" "$destination" "$SCREEN" <<'PY'
 import json, shutil, sys
 from pathlib import Path
 
-attachment_dir, destination = Path(sys.argv[1]), Path(sys.argv[2])
+attachment_dir, destination, screen = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 manifest = json.loads((attachment_dir / "manifest.json").read_text())
 for test in manifest:
     for attachment in test["attachments"]:
-        if attachment["suggestedHumanReadableName"].startswith("canvas"):
+        # Xcode appends an index and a UUID to the name the test gave it.
+        if attachment["suggestedHumanReadableName"].startswith(screen):
             shutil.copyfile(attachment_dir / attachment["exportedFileName"], destination)
             sys.exit(0)
-sys.exit(f"No canvas screenshot in {attachment_dir} — did the capture test run?")
+sys.exit(f"No '{screen}' screenshot in {attachment_dir} — did the capture test run?")
 PY
 }
 
@@ -83,5 +96,5 @@ done
 
 succeed "Screenshots written to $OUTPUT_DIR/"
 for appearance in "${APPEARANCES[@]}"; do
-  printf '  %s\n' "$OUTPUT_DIR/canvas-$appearance.png"
+  printf '  %s\n' "$OUTPUT_DIR/$SCREEN-$appearance.png"
 done

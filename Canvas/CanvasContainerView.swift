@@ -3,11 +3,15 @@ import SwiftUI
 /// Root of the drawing screen. The only view that imports from multiple feature folders.
 /// It composes every major UI region without containing logic of its own.
 struct CanvasContainerView: View {
-    /// Closes the canvas and returns to the document list.
+    /// Owns the open document: loading, autosaving, and the title.
+    let session: DocumentEditorSession
+    /// Closes the canvas and returns to the document library.
     var onClose: () -> Void = {}
 
-    @State private var viewModel = CanvasViewModel()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isExportSheetPresented = false
+
+    private var viewModel: CanvasViewModel { session.viewModel }
 
     /// Shared by every chrome surface so they morph into one another instead of
     /// cross-fading when panels open and close.
@@ -39,6 +43,17 @@ struct CanvasContainerView: View {
         }
         .sheet(isPresented: $isExportSheetPresented) {
             ExportSheetView(document: currentDocument())
+        }
+        .overlay { loadFailureNotice }
+        .task { await session.load() }
+        // The canvas is the only writer, so every edit has to be handed to the
+        // session here — nothing else is watching the view model.
+        .onChange(of: viewModel.revision) { session.markEdited() }
+        // Backgrounding is the last moment before the app can be killed without
+        // warning, so it flushes rather than waiting out the autosave timer.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active else { return }
+            Task { await session.saveNow() }
         }
     }
 
@@ -106,8 +121,10 @@ struct CanvasContainerView: View {
     private var topChromeRow: some View {
         ZStack {
             TopBarView(
+                title: Binding(get: { session.title }, set: { session.title = $0 }),
+                isSaving: session.hasUnsavedChanges,
                 glassNamespace: glassNamespace,
-                onClose: onClose,
+                onClose: closeDocument,
                 onExportTapped: { isExportSheetPresented = true }
             )
 
@@ -125,18 +142,40 @@ struct CanvasContainerView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topChromeHeight = $0 }
     }
 
+    /// A document whose strokes could not be decoded is shown read-only rather
+    /// than as a blank canvas — a blank canvas invites the user to draw on it and
+    /// save the damage in place.
+    @ViewBuilder
+    private var loadFailureNotice: some View {
+        if case .failed(let message) = session.loadState {
+            ContentUnavailableView {
+                Label("Couldn't open this document", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Back to Documents", action: onClose)
+            }
+            .background(.background)
+        }
+    }
+
+    // MARK: - Actions
+
+    private func closeDocument() {
+        Task {
+            await session.saveNow()
+            onClose()
+        }
+    }
+
     // MARK: - Helpers
 
+    /// Exports the live canvas, not the last save, so what leaves the app is what
+    /// is on screen.
     private func currentDocument() -> SplineDocument {
-        SplineDocument(
-            title: "Untitled",
-            strokes: viewModel.strokes,
-            canvasOrigin: viewModel.canvasTransform.translation,
-            canvasScale: viewModel.canvasTransform.scale
-        )
+        var metadata = session.metadata
+        metadata.canvasOrigin = viewModel.canvasTransform.translation
+        metadata.canvasScale = viewModel.canvasTransform.scale
+        return SplineDocument(metadata: metadata, strokes: viewModel.strokes)
     }
-}
-
-#Preview {
-    CanvasContainerView()
 }

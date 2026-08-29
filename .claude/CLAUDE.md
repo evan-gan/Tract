@@ -23,8 +23,8 @@ be opened.** Everything below runs headless from the shell.
 # Unit + UI tests on an iPad simulator
 ./scripts/test.sh ["iPad Pro 11-inch (M5)"]
 
-# Screenshot the canvas on a simulator — light, dark, or both
-./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"]
+# Screenshot a screen on a simulator — light, dark, or both
+./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library]
 ```
 
 `scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
@@ -35,7 +35,9 @@ produces nothing installable. Use `deploy-device.sh` to actually run it on hardw
 `./scripts/screenshot.sh` is the way to actually *look* at the app. It boots the
 simulator, sets its light/dark appearance, runs the capture test in
 `UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
-into `build/screenshots/canvas-<appearance>.png` — read that file to see the change.
+into `build/screenshots/<screen>-<appearance>.png` — read that file to see the change.
+
+Two screens are wired up: `canvas` (the default) and `library` (the document grid).
 
 Do not hand-roll this. It exists because the pieces are non-obvious:
 
@@ -47,8 +49,14 @@ Do not hand-roll this. It exists because the pieces are non-obvious:
   files by UUID — `manifest.json` is what maps them back to the test's own name.
 
 To capture a different screen, add a test to `CanvasSnapshotUITests` that navigates
-there and calls `attachScreenshot(named:)`; the script picks up any attachment whose
-name starts with `canvas`.
+there and calls `attachScreenshot(named:)`, then add a case mapping that screen name
+to the test method in `screenshot.sh`; the script picks up the attachment whose name
+starts with the screen it was asked for.
+
+The library shot needs documents that already have ink in them, and XCUITest cannot
+draw — the canvas takes Apple Pencil touches only, and a simulated finger drag pans.
+So `testCaptureLibrary` launches with `-TractSeedSampleDocuments`, which makes
+`SampleLibrarySeeder` (DEBUG-only) replace the library with fixed sample drawings.
 
 ## Project generation
 

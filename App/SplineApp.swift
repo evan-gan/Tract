@@ -4,7 +4,7 @@ import SwiftUI
 struct SplineApp: App {
     var body: some Scene {
         WindowGroup {
-            DocumentListView()
+            DocumentLibraryView()
         }
     }
 }

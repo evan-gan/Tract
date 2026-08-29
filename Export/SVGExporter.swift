@@ -8,10 +8,11 @@ struct SVGExporter: ExportAdapter {
     let displayName = "SVG"
 
     func export(document: SplineDocument, viewport: CGRect?) throws -> Data {
-        let strokes = clippedStrokes(document.strokes, to: viewport)
+        let strokes = StrokeRasterizer.strokes(document.strokes, intersecting: viewport)
         guard !strokes.isEmpty else { throw ExportError.noStrokes }
 
-        let bounds = viewport ?? unionBounds(of: strokes)
+        let bounds = viewport ?? StrokeRasterizer.unionBounds(of: strokes)
+        guard !bounds.isNull else { throw ExportError.noStrokes }
         let svg = buildSVG(strokes: strokes, bounds: bounds)
 
         guard let data = svg.data(using: .utf8) else {
@@ -35,7 +36,9 @@ struct SVGExporter: ExportAdapter {
     }
 
     private func svgPath(for stroke: Stroke, offset: CGPoint) -> String {
-        guard stroke.points.count >= 2 else { return "" }
+        // Matches the on-screen renderer: only ink is drawn, and a lone sample
+        // has no segment to describe.
+        guard stroke.style.tool.isDrawingTool, stroke.points.count >= 2 else { return "" }
         let d = cubicBezierPath(points: stroke.points, offset: offset)
         let color = svgColor(stroke.style.color)
         let width = stroke.style.lineWidth
@@ -83,16 +86,6 @@ struct SVGExporter: ExportAdapter {
         String(format: "%.2f", value)
     }
 
-    // MARK: - Viewport helpers
-
-    private func clippedStrokes(_ strokes: [Stroke], to viewport: CGRect?) -> [Stroke] {
-        guard let viewport else { return strokes }
-        return strokes.filter { $0.canvasBounds.intersects(viewport) }
-    }
-
-    private func unionBounds(of strokes: [Stroke]) -> CGRect {
-        strokes.reduce(CGRect.null) { $0.union($1.canvasBounds) }
-    }
 }
 
 // CGPoint subtraction is defined in Utilities/CGPoint+Math.swift
