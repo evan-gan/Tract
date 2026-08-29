@@ -18,6 +18,21 @@ struct StrokePoint: Codable, Sendable {
     /// so we can patch estimated force/azimuth with their final values.
     var estimationUpdateIndex: Int?
 
+    /// A copy of this sample at a new position. Every other field — the full
+    /// pencil telemetry — is deliberately carried over: moving a mark across the
+    /// canvas does not change how it was drawn.
+    func moved(by offset: CGPoint) -> StrokePoint {
+        StrokePoint(
+            position: position + offset,
+            force: force,
+            azimuth: azimuth,
+            altitude: altitude,
+            rollAngle: rollAngle,
+            estimatedPropertiesMask: estimatedPropertiesMask,
+            estimationUpdateIndex: estimationUpdateIndex
+        )
+    }
+
     var estimatedProperties: UITouch.Properties {
         UITouch.Properties(rawValue: estimatedPropertiesMask)
     }

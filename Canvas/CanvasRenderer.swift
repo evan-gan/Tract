@@ -7,6 +7,11 @@ struct CanvasRenderer: View {
     let strokes: [Stroke]
     let activeStroke: Stroke?
     let transform: CanvasTransform
+    /// The strokes a selection drag is currently carrying, and how far. Applied
+    /// here rather than written into the ink so a drag costs no data churn and
+    /// commits as a single undo step when it ends.
+    var selectedStrokeIDs: Set<UUID> = []
+    var selectionOffset: CGPoint = .zero
 
     var body: some View {
         Canvas { context, _ in
@@ -26,7 +31,8 @@ struct CanvasRenderer: View {
         // non-drawing tools can still carry such strokes, so skip them here.
         guard stroke.style.tool.isDrawingTool, stroke.points.count >= 2 else { return }
 
-        let path = buildPath(for: stroke)
+        let dragOffset = selectedStrokeIDs.contains(stroke.id) ? selectionOffset : .zero
+        let path = buildPath(for: stroke, offsetBy: dragOffset)
         context.stroke(
             path,
             with: .color(stroke.style.swiftUIColor),
@@ -41,9 +47,9 @@ struct CanvasRenderer: View {
     /// Builds a smooth path through all stroke points using midpoint quadratic
     /// Béziers. The control point is the actual data point; the curve passes
     /// through midpoints — a cheap technique that looks smooth without cubic math.
-    private func buildPath(for stroke: Stroke) -> Path {
+    private func buildPath(for stroke: Stroke, offsetBy dragOffset: CGPoint) -> Path {
         Path { path in
-            let screenPoints = stroke.points.map { transform.toScreen($0.position) }
+            let screenPoints = stroke.points.map { transform.toScreen($0.position + dragOffset) }
             path.move(to: screenPoints[0])
 
             for idx in 1 ..< screenPoints.count {

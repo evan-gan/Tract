@@ -35,6 +35,14 @@ struct Stroke: Identifiable, Codable, Sendable {
             : canvasBounds.union(CGRect(origin: point.position, size: .zero))
     }
 
+    /// Slides every sample by the same offset, taking the cached bounds with
+    /// them. Used to move a lasso selection: the telemetry on each point is
+    /// untouched, only where the mark sits on the canvas changes.
+    mutating func translate(by offset: CGPoint) {
+        points = points.map { $0.moved(by: offset) }
+        canvasBounds = canvasBounds.offsetBy(dx: offset.x, dy: offset.y)
+    }
+
     /// Replaces an estimated point with its final values from UIKit's update pass.
     mutating func updatePoint(at updateIndex: Int, with finalPoint: StrokePoint) {
         guard let idx = points.firstIndex(where: { $0.estimationUpdateIndex == updateIndex }) else {

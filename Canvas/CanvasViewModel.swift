@@ -105,12 +105,38 @@ final class CanvasViewModel {
 
     var hasSelection: Bool { !selectedStrokeIDs.isEmpty }
 
+    /// The canvas-space standoff the current selection's frame is built with.
+    /// Fixed at the zoom the selection was made at rather than tracking the live
+    /// zoom, so the frame magnifies with the canvas — like ink does — instead of
+    /// having to be re-traced on every frame of a pinch.
+    private(set) var selectionStandoff: CGFloat = SelectionStyle.standoff
+
     var selectedStrokes: [Stroke] {
         strokes.filter { selectedStrokeIDs.contains($0.id) }
     }
 
+    /// How far the selection has been dragged so far, in canvas space. The ink
+    /// itself is left alone until the drag ends and the renderer offsets the
+    /// selected strokes by this instead — which keeps a drag free of array churn,
+    /// leaves the outline's traced shape valid throughout, and makes the whole
+    /// move a single undo step.
+    private(set) var selectionDragOffset: CGPoint = .zero
+
+    var isDraggingSelection: Bool { selectionDragOrigin != nil }
+
     func clearSelection() {
         selectedStrokeIDs.removeAll()
+        cancelSelectionDrag()
+    }
+
+    /// Whether a canvas point lands inside the selection's frame. It measures
+    /// against `selectionStandoff` rather than the live zoom, so what can be
+    /// grabbed stays exactly what the user can see framed.
+    func selectionContains(_ canvasPoint: CGPoint) -> Bool {
+        guard hasSelection else { return false }
+        return selectedStrokes.contains {
+            StrokeGeometry.stroke($0, contains: canvasPoint, within: selectionStandoff)
+        }
     }
 
     // MARK: - Palette flyout visibility
@@ -148,6 +174,13 @@ final class CanvasViewModel {
     /// undo stack only if the gesture actually removed something.
     private var strokesBeforeErase: [Stroke]?
 
+    /// Where a selection drag was grabbed, in canvas space, or nil when no drag
+    /// is in flight. Doubles as the flag for whether one is.
+    private var selectionDragOrigin: CGPoint?
+    /// Stroke list as it stood before the current selection drag, so the move can
+    /// be undone in one step.
+    private var strokesBeforeSelectionDrag: [Stroke]?
+
     // MARK: - Stroke lifecycle
 
     func beginStroke(with point: StrokePoint) {
@@ -156,7 +189,7 @@ final class CanvasViewModel {
         switch activeTool {
         case .pen: beginInkStroke(with: point)
         case .eraser: beginErase(at: point.position)
-        case .lasso: beginLasso(at: point.position)
+        case .lasso: beginLassoOrSelectionDrag(at: point.position)
         }
     }
 
@@ -164,7 +197,7 @@ final class CanvasViewModel {
         switch activeTool {
         case .pen: activeStroke?.appendPoint(point)
         case .eraser: continueErase(to: point.position)
-        case .lasso: lassoPath.append(point.position)
+        case .lasso: continueLassoOrSelectionDrag(to: point.position)
         }
     }
 
@@ -172,7 +205,7 @@ final class CanvasViewModel {
         switch activeTool {
         case .pen: commitInkStroke()
         case .eraser: endErase()
-        case .lasso: commitLassoSelection()
+        case .lasso: endLassoOrSelectionDrag()
         }
     }
 
@@ -181,6 +214,7 @@ final class CanvasViewModel {
         lassoPath.removeAll()
         lastErasePoint = nil
         strokesBeforeErase = nil
+        cancelSelectionDrag()
     }
 
     /// UIKit refines estimated force/azimuth after the fact, and the update can
@@ -248,6 +282,33 @@ final class CanvasViewModel {
 
     // MARK: - Lasso
 
+    /// A pencil landing inside an existing selection grabs it; anywhere else
+    /// starts a fresh loop — which is also what drops the selection when the user
+    /// taps the blank paper, since a tap encloses nothing.
+    private func beginLassoOrSelectionDrag(at canvasPoint: CGPoint) {
+        if selectionContains(canvasPoint) {
+            beginSelectionDrag(at: canvasPoint)
+        } else {
+            beginLasso(at: canvasPoint)
+        }
+    }
+
+    private func continueLassoOrSelectionDrag(to canvasPoint: CGPoint) {
+        if isDraggingSelection {
+            updateSelectionDrag(to: canvasPoint)
+        } else {
+            lassoPath.append(canvasPoint)
+        }
+    }
+
+    private func endLassoOrSelectionDrag() {
+        if isDraggingSelection {
+            endSelectionDrag()
+        } else {
+            commitLassoSelection()
+        }
+    }
+
     private func beginLasso(at canvasPoint: CGPoint) {
         clearSelection()
         activeStroke = nil
@@ -263,6 +324,51 @@ final class CanvasViewModel {
         selectedStrokeIDs = Set(
             strokes.filter { StrokeGeometry.stroke($0, isEnclosedBy: loop) }.map(\.id)
         )
+        // Captured once, here: the frame is canvas geometry from now on.
+        selectionStandoff = SelectionStyle.standoff / max(canvasTransform.scale, .ulpOfOne)
+    }
+
+    // MARK: - Moving a selection
+
+    /// Picks the selection up at a canvas point. Callers that can start a drag
+    /// anywhere — the finger gesture — must check `selectionContains(_:)` first;
+    /// this only guards against there being nothing to move at all.
+    func beginSelectionDrag(at canvasPoint: CGPoint) {
+        guard hasSelection else { return }
+        selectionDragOrigin = canvasPoint
+        strokesBeforeSelectionDrag = strokes
+        selectionDragOffset = .zero
+    }
+
+    /// Tracked against the grab point in canvas space rather than by accumulating
+    /// deltas, so the selection stays glued to the finger or nib even if the
+    /// canvas is zoomed underneath it mid-drag.
+    func updateSelectionDrag(to canvasPoint: CGPoint) {
+        guard let origin = selectionDragOrigin else { return }
+        selectionDragOffset = canvasPoint - origin
+    }
+
+    /// Writes the drag into the ink as one undo step. A drag that never actually
+    /// moved anything is not an edit, so it pushes nothing.
+    func endSelectionDrag() {
+        let offset = selectionDragOffset
+        guard let strokesBeforeDrag = strokesBeforeSelectionDrag else { return }
+        cancelSelectionDrag()
+        guard offset != .zero else { return }
+
+        undoStack.append(strokesBeforeDrag)
+        redoStack.removeAll()
+        for index in strokes.indices where selectedStrokeIDs.contains(strokes[index].id) {
+            strokes[index].translate(by: offset)
+        }
+        recordEdit()
+    }
+
+    /// Drops the drag without moving anything — the ink was never touched.
+    func cancelSelectionDrag() {
+        selectionDragOrigin = nil
+        strokesBeforeSelectionDrag = nil
+        selectionDragOffset = .zero
     }
 
     // MARK: - Undo / redo

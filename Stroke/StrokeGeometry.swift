@@ -121,4 +121,24 @@ enum StrokeGeometry {
         guard lassoPolygon.count >= 3, !stroke.points.isEmpty else { return false }
         return stroke.points.allSatisfy { polygon(lassoPolygon, contains: $0.position) }
     }
+
+    // MARK: - Selection picking
+
+    /// Whether a point falls within `radius` of a stroke. This is the grab test
+    /// for a selection: it matches the region the selection outline encloses, so
+    /// what the user can pick up is exactly what they can see framed.
+    static func stroke(_ stroke: Stroke, contains point: CGPoint, within radius: CGFloat) -> Bool {
+        guard stroke.canvasBounds.insetBy(dx: -radius, dy: -radius).contains(point) else { return false }
+
+        let positions = stroke.points.map(\.position)
+        guard let firstPosition = positions.first else { return false }
+        // A single-point stroke is a dot: no segment, so measure to the point.
+        guard positions.count >= 2 else { return firstPosition.distance(to: point) <= radius }
+
+        for index in 1 ..< positions.count
+        where distance(from: point, toSegment: positions[index - 1], positions[index]) <= radius {
+            return true
+        }
+        return false
+    }
 }

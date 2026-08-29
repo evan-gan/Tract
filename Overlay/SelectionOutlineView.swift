@@ -1,11 +1,24 @@
 import SwiftUI
 
-/// Marching-ants outline around whatever the lasso selected. It follows the
-/// shape of the ink — the selection's own outline pushed outward — rather than
-/// boxing it in, and stands a quarter inch clear of every stroke.
+/// Marching-ants outline around whatever the lasso selected. It hugs the ink —
+/// the outline is everything within a quarter inch of a selected stroke — rather
+/// than boxing the selection in, and anything further than two standoffs from
+/// the rest of the selection gets an outline of its own instead of being roped
+/// in by one shared frame.
 struct SelectionOutlineView: View {
     let selectedStrokes: [Stroke]
     let transform: CanvasTransform
+    /// How far the frame stands off the ink, in canvas space. Owned by the view
+    /// model and fixed when the selection is made — see
+    /// `CanvasViewModel.selectionStandoff`.
+    let standoff: CGFloat
+    /// Live drag translation in canvas space. Applied on top of the cached shape
+    /// so moving a selection never re-traces it.
+    var dragOffset: CGPoint = .zero
+
+    /// The traced contours, in canvas space. Held as state because building a
+    /// distance field is far too expensive to redo on every frame of the march.
+    @State private var contours: [[CGPoint]] = []
 
     var body: some View {
         // A timeline drives the march rather than an animated @State value:
@@ -13,15 +26,15 @@ struct SelectionOutlineView: View {
         // re-runs it. Nothing else on screen animates from this.
         TimelineView(.animation) { timeline in
             Canvas { context, _ in
-                guard let outline = outlinePath() else { return }
                 context.stroke(
-                    outline,
+                    outlinePath(),
                     with: .color(SelectionStyle.color),
                     style: SelectionStyle.outline(dashPhase: marchPhase(at: timeline.date))
                 )
             }
         }
         .allowsHitTesting(false)
+        .onChange(of: shapeIdentity, initial: true) { contours = traceContours() }
     }
 
     /// Walks the dash pattern back by exactly one cycle every `marchDuration`,
@@ -31,56 +44,67 @@ struct SelectionOutlineView: View {
         return -CGFloat(cycles.truncatingRemainder(dividingBy: 1)) * SelectionStyle.dashPeriod
     }
 
-    /// The selection's outline in screen space, standing off the ink.
-    /// The standoff is applied after the transform so it stays a constant
-    /// physical distance instead of shrinking and growing with the zoom.
-    private func outlinePath() -> Path? {
-        let screenPoints = selectedStrokes
-            .flatMap(\.points)
-            .map { transform.toScreen($0.position) }
-        guard !screenPoints.isEmpty else { return nil }
+    // MARK: - Tracing
 
-        let hull = SelectionOutline.convexHull(of: screenPoints)
-        // A hull needs three corners to be offset. A single straight stroke does
-        // not have them, so it gets a rounded capsule around its extent instead.
-        guard hull.count >= 3 else { return degenerateOutline(around: screenPoints) }
-
-        let expanded = SelectionOutline.offset(polygon: hull, by: SelectionStyle.standoff)
-        return softenedPath(through: expanded)
+    /// Everything that can change the outline's shape: which strokes are
+    /// selected, how many samples they hold, and where they sit. Navigation is
+    /// deliberately absent — panning and zooming a selection around costs nothing
+    /// because neither re-traces it.
+    private var shapeIdentity: SelectionShapeIdentity {
+        SelectionShapeIdentity(
+            strokeIDs: selectedStrokes.map(\.id),
+            pointCounts: selectedStrokes.map(\.points.count),
+            inkBounds: selectedStrokes.reduce(CGRect.null) { $0.union($1.canvasBounds) },
+            standoff: standoff
+        )
     }
 
-    /// Fallback for selections with no area of their own: a dot, or ink that
-    /// falls on a single straight line.
-    private func degenerateOutline(around screenPoints: [CGPoint]) -> Path {
-        let extent = screenPoints.reduce(CGRect.null) {
-            $0.union(CGRect(origin: $1, size: .zero))
-        }
-        let padded = extent.insetBy(dx: -SelectionStyle.standoff, dy: -SelectionStyle.standoff)
-        return Path(roundedRect: padded, cornerRadius: SelectionStyle.cornerSoftening,
-                    style: .continuous)
+    /// Traces in canvas space at a standoff that was fixed when the selection was
+    /// made, so the contours are plain canvas geometry from then on: zooming
+    /// magnifies the frame along with the ink it frames, exactly as it magnifies
+    /// stroke width. Re-tracing to hold a literal quarter inch on screen would
+    /// mean rebuilding a distance field on every frame of a pinch, which is the
+    /// one thing this cache exists to avoid.
+    private func traceContours() -> [[CGPoint]] {
+        let polylines = selectedStrokes.map { $0.points.map(\.position) }
+        guard !polylines.isEmpty else { return [] }
+        return SelectionRegion.contours(around: polylines, radius: standoff)
     }
 
-    /// Traces the polygon, replacing each hard corner with a short arc. Starting
-    /// mid-edge means every corner — including the one at the start — is softened.
-    private func softenedPath(through vertices: [CGPoint]) -> Path {
-        let radius = softeningRadius(for: vertices)
-        return Path { path in
-            path.move(to: vertices[vertices.count - 1].midpoint(to: vertices[0]))
-            for index in vertices.indices {
-                let corner = vertices[index]
-                let next = vertices[(index + 1) % vertices.count]
-                path.addArc(tangent1End: corner, tangent2End: next, radius: radius)
+    // MARK: - Drawing
+
+    private func outlinePath() -> Path {
+        Path { path in
+            for contour in contours {
+                appendSmoothedLoop(contour, to: &path)
             }
-            path.closeSubpath()
         }
     }
 
-    /// Clamped to half the shortest edge: an arc wider than the edge it sits on
-    /// would eat into its neighbour and buckle the outline.
-    private func softeningRadius(for vertices: [CGPoint]) -> CGFloat {
-        let shortestEdge = vertices.indices
-            .map { vertices[$0].distance(to: vertices[($0 + 1) % vertices.count]) }
-            .min() ?? 0
-        return min(SelectionStyle.cornerSoftening, shortestEdge / 2)
+    /// Traces one contour with midpoint quadratic Béziers. Marching squares lands
+    /// its vertices on grid edges, so a raw loop carries a faint staircase;
+    /// curving through the midpoints takes it out without pulling the outline off
+    /// the shape it is describing.
+    private func appendSmoothedLoop(_ canvasContour: [CGPoint], to path: inout Path) {
+        guard canvasContour.count >= 3 else { return }
+        let screenPoints = canvasContour.map { transform.toScreen($0 + dragOffset) }
+        let lastIndex = screenPoints.count - 1
+
+        path.move(to: screenPoints[lastIndex].midpoint(to: screenPoints[0]))
+        for index in screenPoints.indices {
+            let vertex = screenPoints[index]
+            let next = screenPoints[index == lastIndex ? 0 : index + 1]
+            path.addQuadCurve(to: vertex.midpoint(to: next), control: vertex)
+        }
+        path.closeSubpath()
     }
+}
+
+/// Fingerprint of a selection's shape. Comparing this is what decides whether
+/// the outline has to be traced again.
+private struct SelectionShapeIdentity: Equatable {
+    let strokeIDs: [UUID]
+    let pointCounts: [Int]
+    let inkBounds: CGRect
+    let standoff: CGFloat
 }

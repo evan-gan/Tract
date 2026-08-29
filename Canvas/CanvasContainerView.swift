@@ -26,7 +26,9 @@ struct CanvasContainerView: View {
             CanvasRenderer(
                 strokes: viewModel.strokes,
                 activeStroke: viewModel.activeStroke,
-                transform: viewModel.canvasTransform
+                transform: viewModel.canvasTransform,
+                selectedStrokeIDs: viewModel.selectedStrokeIDs,
+                selectionOffset: viewModel.selectionDragOffset
             )
             .ignoresSafeArea()
             CanvasView(viewModel: viewModel)
@@ -97,7 +99,9 @@ struct CanvasContainerView: View {
             if viewModel.hasSelection {
                 SelectionOutlineView(
                     selectedStrokes: viewModel.selectedStrokes,
-                    transform: viewModel.canvasTransform
+                    transform: viewModel.canvasTransform,
+                    standoff: viewModel.selectionStandoff,
+                    dragOffset: viewModel.selectionDragOffset
                 )
             }
         }

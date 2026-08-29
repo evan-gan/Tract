@@ -84,14 +84,14 @@ Tract/
 │   ├── ZoomIndicatorView.swift   # "100%" readout, top-right. Tap → reset zoom.
 │   ├── SelectionStyle.swift      # Shared selection tokens: red, dash, standoff, softening
 │   ├── LassoPathView.swift       # The loop being traced, drawn closed and static
-│   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection
+│   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection, traced + cached
 │   └── PencilHoverDotView.swift  # Dot under the hovering nib, at the size the mark will be
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures + TemporaryDirectory for persistence tests
-│   ├── Canvas/                   # Eraser, lasso, zoom-scaled widths, pencil hover preview
+│   ├── Canvas/                   # Eraser, lasso, selection drag, zoom-scaled widths, pencil hover
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
-│   ├── Stroke/                   # StrokeGeometry hits + SelectionOutline hull/offset
+│   ├── Stroke/                   # StrokeGeometry hits + SelectionRegion standoff/splitting
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
 │   ├── ToolDockDragUITests.swift # The dock's drag/snap gesture
@@ -102,7 +102,7 @@ Tract/
 │   ├── StrokePoint.swift         # Single pencil sample (position, force, azimuth, altitude, roll)
 │   ├── Stroke.swift              # Full pen-down→pen-up gesture
 │   ├── StrokeGeometry.swift      # Segment intersection, point-in-polygon, eraser/lasso hit tests
-│   ├── SelectionOutline.swift    # Convex hull + outward mitred offset for the selection frame
+│   ├── SelectionRegion.swift     # Dilates the selected ink into the contours the frame is drawn from
 │   ├── StrokeStyle.swift         # Color (SIMD4<Float>), width, opacity, ToolType
 │   └── InkColor.swift            # Named ink colours + the dock's quick palette (default ink: black)
 │
@@ -159,6 +159,11 @@ closed and every stroke whose points *all* fall inside it
 deliberately excluded. Selecting is not an edit: it never touches the undo stack.
 The result is framed by `SelectionOutlineView`.
 
+Once something is selected, the lasso's pencil gesture forks: a nib landing inside
+the frame drags the selection instead of starting a new loop
+(`CanvasViewModel.beginLassoOrSelectionDrag`). Landing anywhere else starts a fresh
+loop, which is also what drops the selection when the user taps blank paper.
+
 Selection rules worth keeping:
 
 - The selection clears on any tool change away from the lasso, on the start of a pen
@@ -169,18 +174,60 @@ Selection rules worth keeping:
 - `SelectionStyle` owns every selection token. It is red so the marquee stands off a
   drawing, and the dash pattern is deliberately between a dash and a dot; the dashes
   hold still while the lasso is being traced and only march once a selection exists.
-- The frame **follows the shape of the ink**, it is not a bounding box. The convex
-  hull of every selected point (`SelectionOutline.convexHull`) is pushed outward by
-  `SelectionStyle.standoff` — a quarter inch, at 132 pt/inch on iPad — with mitred
-  corners, so the standoff is the same on every side. Corners sharp enough to throw
-  a spike are cut back to a bevel by `SelectionOutline`'s mitre limit, and the drawn
-  path softens each corner with a short arc rather than a full fillet.
-- Hull and offset are both computed in **screen** space, after the canvas transform,
-  so the standoff stays a constant physical distance at any zoom.
-- A selection with no area of its own — a dot, or ink on one straight line — has no
-  hull to offset, so it falls back to a padded rounded rect.
+- The frame **hugs the ink**, it is neither a bounding box nor a hull. It is the
+  *dilation* of the selected strokes: every point within `SelectionStyle.standoff`
+  — a quarter inch, at 132 pt/inch on iPad — of a selected stroke.
+  `SelectionRegion.contours(around:radius:)` builds it by splatting a distance
+  field over the ink and tracing the standoff iso-line with marching squares.
+- **Ink far enough apart gets its own outline.** That is not a special case: two
+  strokes more than two standoffs apart grow dilated regions that never meet, so
+  marching squares returns two loops. They merge into one the moment the regions
+  touch. Enclosed holes come back as their own contours too.
+- **Blips inside the frame are dropped.** Crossing strokes routinely leave a gap
+  just wide enough to survive the dilation, and the speck of an outline that comes
+  back reads as litter. `SelectionRegion.withoutEnclosedBlips` removes any contour
+  smaller than `enclosedPocketAreaLimit` discs *that something else encloses* — the
+  enclosure check is what keeps a small piece of ink standing on its own from being
+  swallowed, since that is exactly what the split rule exists to show. Raise
+  `enclosedPocketAreaLimit` to be more aggressive about tidying holes away.
+- The trace is **cached** in `SelectionOutlineView.contours` and rebuilt only when
+  `SelectionShapeIdentity` changes — which strokes, how many samples, where they
+  sit, and the standoff. Navigation is deliberately not in that list: tracing a
+  distance field on every frame of a pan or a pinch would be far too expensive.
+- **The standoff is fixed at the zoom the selection was made at**, not held at a
+  constant physical distance. `CanvasViewModel.selectionStandoff` captures
+  `SelectionStyle.standoff / scale` once, in `commitLassoSelection()`, and the
+  contours are plain canvas geometry from then on — so zooming magnifies the frame
+  along with the ink it frames, exactly as it magnifies stroke width, and costs no
+  re-trace. `selectionContains(_:)` measures against the same value, so what can be
+  grabbed stays what can be seen at any zoom. This is the one place the selection
+  chrome is *not* a screen-space constant; the dash pattern still is.
+- The drawn path curves through the contour's midpoints, which takes the grid
+  staircase off.
+- A selection with no area of its own — a dot, or ink on one straight line — needs
+  no fallback: dilating it gives a circle or a capsule.
 - The march is driven by a `TimelineView(.animation)` date, not an animated `@State`:
   `Canvas` redraws from its closure, and only a per-frame value reliably re-runs it.
+
+### Moving a selection
+
+A selection is dragged with the pencil or with one finger, and dropped by tapping
+blank paper. Rules:
+
+- **The ink is not touched until the drag ends.** `CanvasViewModel.selectionDragOffset`
+  holds the live translation in canvas space; `CanvasRenderer` and
+  `SelectionOutlineView` both offset by it at draw time. That keeps the traced
+  outline valid throughout, costs no array churn per frame, and makes the whole
+  move a single undo step — pushed by `endSelectionDrag()`, and only if it moved.
+- **What can be grabbed is what can be seen.** `CanvasViewModel.selectionContains(_:)`
+  uses the same standoff the outline is drawn at, via
+  `StrokeGeometry.stroke(_:contains:within:)`.
+- **The drag tracks absolute canvas positions, not accumulated deltas**, so the
+  selection stays glued to the nib or finger even if the canvas is zoomed mid-drag.
+- **The finger drag refuses to begin off the selection.** `CanvasUIView` overrides
+  `gestureRecognizerShouldBegin` for its pan recognizer; that is what leaves every
+  other finger touch free for pan and zoom. It is capped at one touch, so a second
+  finger hands the gesture back to the pinch.
 
 ---
 
@@ -313,6 +360,10 @@ Apple Pencil → UIView.touchesBegan/Moved/Ended
   → CanvasViewModel.beginStroke / continueStroke / endStroke
   → SwiftUI Canvas re-renders
 
+One finger on an existing selection → UIPanGestureRecognizer (finger only, 1 touch)
+  → gated by gestureRecognizerShouldBegin → CanvasViewModel.beginSelectionDrag(at:)
+One finger tapping elsewhere → UITapGestureRecognizer → CanvasViewModel.clearSelection()
+
 Apple Pencil hovering (not touching) → UIHoverGestureRecognizer (pencil touch type only)
   → CanvasViewModel.updatePencilHover(to:)   ← screen space, cleared on touch-down
   → PencilHoverDotView
@@ -362,8 +413,10 @@ spreading its points apart while the lines stay a fixed thickness.
 - The hover preview's diameter comes from `CanvasViewModel.pencilPreviewDiameter`,
   which is the same conversion applied to the current `strokeWidth`.
 - The exporters deliberately do **not** scale: they render in canvas space at 1:1.
-- Selection chrome is the exception in the other direction — its dash and standoff
-  are constants in screen space, because it is chrome, not ink.
+- Selection chrome is a mixed case. Its dash pattern is a screen-space constant,
+  because it is chrome; its standoff is not — that is captured in canvas space when
+  the selection is made and then scales with the drawing, so a pinch never has to
+  re-trace the outline. See `CanvasViewModel.selectionStandoff`.
 
 ---
 
@@ -391,7 +444,9 @@ would be claiming a nib that isn't there.
 | Change what the eraser hits | `StrokeGeometry.stroke(_:isCrossedBy:_:)` |
 | Change what the lasso selects | `StrokeGeometry.stroke(_:isEnclosedBy:)` |
 | Change the selection outline's look or standoff | `SelectionStyle.swift` |
-| Change how the selection outline is shaped | `SelectionOutline.swift` |
+| Change how the selection outline is shaped | `SelectionRegion.swift` (the dilation and its tracing); `SelectionOutlineView.swift` for the curve smoothing and the re-trace cache |
+| Change what counts as grabbing a selection | `CanvasViewModel.selectionContains(_:)` |
+| Change how a selection is moved | The "Moving a selection" methods in `CanvasViewModel.swift`; the gestures live in `CanvasUIView.swift` |
 | Change the dock's quick colours | `InkColor.dockPalette` in `InkColor.swift` |
 | Change how the dock snaps | `DockEdge.nearest(to:in:)` in `DockEdge.swift` |
 | Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift` |

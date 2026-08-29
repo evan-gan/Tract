@@ -4,10 +4,11 @@ import UIKit
 #error("This file requires UIKit and is designed for iOS/iPadOS only")
 #endif
 
-/// UIView subclass responsible for three things only:
+/// UIView subclass responsible for four things only:
 ///   1. Routing Apple Pencil touches to the view model.
 ///   2. Handling two-finger pan and pinch-to-zoom gestures.
 ///   3. Tracking where the pencil hovers, so the canvas can preview the nib.
+///   4. Letting one finger move — or a tap dismiss — a lasso selection.
 ///
 /// Finger touches are intentionally ignored for drawing — they fall through
 /// to the gesture recognizers, which are also configured to finger-only.
@@ -22,6 +23,15 @@ final class CanvasUIView: UIView {
     // Reports the pencil's position while it is near the glass but not touching,
     // which is what drives the hover preview dot.
     private let hoverGesture = UIHoverGestureRecognizer()
+
+    // One finger moves an existing selection. It only begins when the touch
+    // lands inside the selection (see gestureRecognizerShouldBegin), so a finger
+    // anywhere else still belongs to pan and zoom.
+    private let selectionPanGesture = UIPanGestureRecognizer()
+
+    // A finger tapping the blank paper drops the selection. Pencil taps need no
+    // equivalent: they already go through the lasso's own begin/end path.
+    private let deselectTapGesture = UITapGestureRecognizer()
 
     // Canvas-space positions of the two fingers captured at gesture start.
     // Held fixed for the duration of the gesture; each frame solves for the
@@ -58,6 +68,18 @@ final class CanvasUIView: UIView {
         hoverGesture.allowedTouchTypes = [pencilTouchType]
         hoverGesture.addTarget(self, action: #selector(handleHover(_:)))
         addGestureRecognizer(hoverGesture)
+
+        // Capped at one touch so that adding a second finger hands the gesture
+        // back to the pinch rather than dragging the selection around with it.
+        selectionPanGesture.allowedTouchTypes = [fingerTouchType]
+        selectionPanGesture.maximumNumberOfTouches = 1
+        selectionPanGesture.delegate = self
+        selectionPanGesture.addTarget(self, action: #selector(handleSelectionPan(_:)))
+        addGestureRecognizer(selectionPanGesture)
+
+        deselectTapGesture.allowedTouchTypes = [fingerTouchType]
+        deselectTapGesture.addTarget(self, action: #selector(handleDeselectTap(_:)))
+        addGestureRecognizer(deselectTapGesture)
     }
 
     private func configurePencilInteraction() {
@@ -147,6 +169,54 @@ final class CanvasUIView: UIView {
         )
     }
 
+    // MARK: - Moving a selection with a finger
+
+    /// Drags the current selection. Positions are converted to canvas space and
+    /// handed over whole rather than as the recognizer's own translation, so the
+    /// selection stays under the finger even if the canvas is zoomed mid-drag.
+    @objc private func handleSelectionPan(_ gesture: UIPanGestureRecognizer) {
+        guard let viewModel else { return }
+        let screenLocation = gesture.location(in: self)
+        MainActor.assumeIsolated {
+            let canvasPoint = viewModel.canvasTransform.toCanvas(screenLocation)
+            switch gesture.state {
+            case .began: viewModel.beginSelectionDrag(at: canvasPoint)
+            case .changed: viewModel.updateSelectionDrag(to: canvasPoint)
+            case .ended: viewModel.endSelectionDrag()
+            default: viewModel.cancelSelectionDrag()
+            }
+        }
+    }
+
+    /// Tapping off the selection clears it.
+    @objc private func handleDeselectTap(_ gesture: UITapGestureRecognizer) {
+        guard let viewModel, gesture.state == .ended else { return }
+        let screenLocation = gesture.location(in: self)
+        MainActor.assumeIsolated {
+            let canvasPoint = viewModel.canvasTransform.toCanvas(screenLocation)
+            // A tap that lands on the selection is a missed grab, not a request
+            // to drop what was so recently selected.
+            guard !viewModel.selectionContains(canvasPoint) else { return }
+            viewModel.clearSelection()
+        }
+    }
+
+    // MARK: - Gesture gating
+
+    /// The selection drag claims a finger only when it starts on the selection.
+    /// Refusing to begin here rather than bailing out in the handler is what
+    /// leaves every other finger touch free for pan and zoom.
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === selectionPanGesture, let viewModel else {
+            return super.gestureRecognizerShouldBegin(gestureRecognizer)
+        }
+        return MainActor.assumeIsolated {
+            viewModel.selectionContains(
+                viewModel.canvasTransform.toCanvas(gestureRecognizer.location(in: self))
+            )
+        }
+    }
+
     // MARK: - Pinch gesture (handles pan + zoom)
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
@@ -203,6 +273,10 @@ final class CanvasUIView: UIView {
         }
     }
 }
+
+// The gate itself is an override of UIView's own hook, which cannot live in an
+// extension — see `gestureRecognizerShouldBegin` above.
+extension CanvasUIView: UIGestureRecognizerDelegate {}
 
 // MARK: - UIPencilInteractionDelegate
 
