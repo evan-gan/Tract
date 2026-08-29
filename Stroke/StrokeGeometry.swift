@@ -1,13 +1,9 @@
 import CoreGraphics
 
-/// Pure geometry used by the eraser (does this gesture cross a stroke?) and the
+/// Pure geometry used by the eraser (does this gesture touch a stroke?) and the
 /// lasso (is this stroke entirely inside the loop the user drew?).
 /// Everything here works in canvas space and has no UI dependencies.
 enum StrokeGeometry {
-
-    /// How close the eraser has to pass to a zero-length stroke — a tap-dot — to
-    /// count as a hit. Dots have no segment to cross, so proximity is the only test.
-    private static let dotHitRadius: CGFloat = 6
 
     // MARK: - Segment intersection
 
@@ -63,29 +59,70 @@ enum StrokeGeometry {
         return point.distance(to: closest)
     }
 
+    /// Shortest distance between two line segments.
+    ///
+    /// Segments that cross are zero apart; otherwise the closest approach always
+    /// involves an endpoint of one of them, so the four endpoint-to-segment
+    /// distances cover every remaining case.
+    static func distance(
+        fromSegment firstStart: CGPoint, _ firstEnd: CGPoint,
+        toSegment secondStart: CGPoint, _ secondEnd: CGPoint
+    ) -> CGFloat {
+        if segmentsIntersect(firstStart, firstEnd, secondStart, secondEnd) { return 0 }
+        return min(
+            distance(from: firstStart, toSegment: secondStart, secondEnd),
+            distance(from: firstEnd, toSegment: secondStart, secondEnd),
+            distance(from: secondStart, toSegment: firstStart, firstEnd),
+            distance(from: secondEnd, toSegment: firstStart, firstEnd)
+        )
+    }
+
     // MARK: - Eraser
 
-    /// Whether an eraser movement — one segment of the erase gesture — crosses a stroke.
-    static func stroke(_ stroke: Stroke, isCrossedBy eraserStart: CGPoint, _ eraserEnd: CGPoint) -> Bool {
+    /// Whether an eraser movement — one segment of the erase gesture — touches the
+    /// *visible* body of a stroke.
+    ///
+    /// Ink is drawn as a round-capped line half a `lineWidth` either side of the
+    /// samples it was recorded from, so testing the bare centreline would make
+    /// the eraser pass straight through the middle of a thick mark without
+    /// deleting it. Measuring to the centreline and allowing for that half width
+    /// — plus the eraser's own tip — erases exactly what the user saw it touch.
+    ///
+    /// - Parameters:
+    ///   - stroke: The stroke being tested.
+    ///   - eraserStart: Where the eraser was on the previous sample.
+    ///   - eraserEnd: Where it is now.
+    ///   - tipRadius: Radius of the eraser's contact patch, in canvas space.
+    /// - Returns: True when the swept eraser overlaps the drawn stroke.
+    static func stroke(
+        _ stroke: Stroke,
+        isTouchedBy eraserStart: CGPoint,
+        _ eraserEnd: CGPoint,
+        tipRadius: CGFloat
+    ) -> Bool {
+        let hitRadius = tipRadius + stroke.style.lineWidth / 2
+
         // Cheap rejection first: most strokes are nowhere near the eraser.
         let eraserBounds = CGRect(
             x: min(eraserStart.x, eraserEnd.x),
             y: min(eraserStart.y, eraserEnd.y),
             width: abs(eraserEnd.x - eraserStart.x),
             height: abs(eraserEnd.y - eraserStart.y)
-        ).insetBy(dx: -dotHitRadius, dy: -dotHitRadius)
+        ).insetBy(dx: -hitRadius, dy: -hitRadius)
         guard stroke.canvasBounds.intersects(eraserBounds) else { return false }
 
         let positions = stroke.points.map(\.position)
         guard let firstPosition = positions.first else { return false }
 
-        // A single-point stroke is a dot: nothing to cross, so use proximity.
+        // A single-point stroke is a dot: no segment, so it is measured against
+        // itself as a zero-length one, which the distance test handles directly.
         guard positions.count >= 2 else {
-            return distance(from: firstPosition, toSegment: eraserStart, eraserEnd) <= dotHitRadius
+            return distance(from: firstPosition, toSegment: eraserStart, eraserEnd) <= hitRadius
         }
 
         for index in 1 ..< positions.count
-        where segmentsIntersect(positions[index - 1], positions[index], eraserStart, eraserEnd) {
+        where distance(fromSegment: positions[index - 1], positions[index],
+                       toSegment: eraserStart, eraserEnd) <= hitRadius {
             return true
         }
         return false

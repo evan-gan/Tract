@@ -8,7 +8,7 @@ import UIKit
 ///   1. Routing Apple Pencil touches to the view model.
 ///   2. Handling one-finger pan, two-finger pan, and pinch-to-zoom gestures.
 ///   3. Tracking where the pencil hovers, so the canvas can preview the nib.
-///   4. Letting one finger move — or a tap dismiss — a lasso selection.
+///   4. Letting one finger move a lasso selection, and a tap act on or dismiss it.
 ///
 /// Finger touches are intentionally ignored for drawing — they fall through
 /// to the gesture recognizers, which are also configured to finger-only.
@@ -33,9 +33,10 @@ final class CanvasUIView: UIView {
     // anywhere else still belongs to pan and zoom.
     private let selectionPanGesture = UIPanGestureRecognizer()
 
-    // A finger tapping the blank paper drops the selection. Pencil taps need no
-    // equivalent: they already go through the lasso's own begin/end path.
-    private let deselectTapGesture = UITapGestureRecognizer()
+    // A finger tapping the selection asks what can be done with it; tapping the
+    // blank paper drops it. Pencil taps need no equivalent: they already go
+    // through the lasso's own begin/end path, which tells a tap from a drag there.
+    private let selectionTapGesture = UITapGestureRecognizer()
 
     // Canvas-space positions of the two fingers captured at gesture start.
     // Held fixed for the duration of the gesture; each frame solves for the
@@ -93,10 +94,10 @@ final class CanvasUIView: UIView {
         selectionPanGesture.addTarget(self, action: #selector(handleSelectionPan(_:)))
         addGestureRecognizer(selectionPanGesture)
 
-        deselectTapGesture.allowedTouchTypes = [fingerTouchType]
-        deselectTapGesture.delegate = self
-        deselectTapGesture.addTarget(self, action: #selector(handleDeselectTap(_:)))
-        addGestureRecognizer(deselectTapGesture)
+        selectionTapGesture.allowedTouchTypes = [fingerTouchType]
+        selectionTapGesture.delegate = self
+        selectionTapGesture.addTarget(self, action: #selector(handleSelectionTap(_:)))
+        addGestureRecognizer(selectionTapGesture)
     }
 
     private func configurePencilInteraction() {
@@ -205,16 +206,14 @@ final class CanvasUIView: UIView {
         }
     }
 
-    /// Tapping off the selection clears it.
-    @objc private func handleDeselectTap(_ gesture: UITapGestureRecognizer) {
+    /// Tapping the selection opens its action menu; tapping off it clears the
+    /// selection. The recognizer itself is what keeps a drag out of this: it only
+    /// fires for a touch that went down and up again without travelling.
+    @objc private func handleSelectionTap(_ gesture: UITapGestureRecognizer) {
         guard let viewModel, gesture.state == .ended else { return }
         let screenLocation = gesture.location(in: self)
         MainActor.assumeIsolated {
-            let canvasPoint = viewModel.canvasTransform.toCanvas(screenLocation)
-            // A tap that lands on the selection is a missed grab, not a request
-            // to drop what was so recently selected.
-            guard !viewModel.selectionContains(canvasPoint) else { return }
-            viewModel.clearSelection()
+            viewModel.handleSelectionTap(at: viewModel.canvasTransform.toCanvas(screenLocation))
         }
     }
 

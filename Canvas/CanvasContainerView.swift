@@ -104,7 +104,27 @@ struct CanvasContainerView: View {
                     dragOffset: viewModel.selectionDragOffset
                 )
             }
+            if let menuAnchor = viewModel.selectionMenuAnchor {
+                SelectionActionMenuView(
+                    anchor: menuAnchor + viewModel.selectionDragOffset,
+                    transform: viewModel.canvasTransform,
+                    actions: selectionActions
+                )
+            }
         }
+    }
+
+    /// What the selection's floating menu offers. Held here rather than in the
+    /// menu so the menu stays a presentation of whatever actions it is handed.
+    private var selectionActions: [SelectionAction] {
+        [
+            SelectionAction(
+                title: "Delete",
+                systemImage: "trash",
+                isDestructive: true,
+                perform: viewModel.deleteSelection
+            )
+        ]
     }
 
     /// The nib preview tracks the pencil rather than the chrome, so like the

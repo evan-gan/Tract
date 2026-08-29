@@ -37,6 +37,33 @@ struct SegmentIntersectionTests {
     }
 }
 
+@Suite("Segment distance")
+struct SegmentDistanceTests {
+    @Test("Crossing segments are zero apart")
+    func crossingSegments() {
+        #expect(StrokeGeometry.distance(
+            fromSegment: CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10),
+            toSegment: CGPoint(x: 0, y: 10), CGPoint(x: 10, y: 0)
+        ) == 0)
+    }
+
+    @Test("Parallel segments are their perpendicular separation apart")
+    func parallelSegments() {
+        #expect(StrokeGeometry.distance(
+            fromSegment: CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0),
+            toSegment: CGPoint(x: 0, y: 4), CGPoint(x: 10, y: 4)
+        ) == 4)
+    }
+
+    @Test("Segments that never overlap are measured between their nearest endpoints")
+    func endpointToEndpoint() {
+        #expect(StrokeGeometry.distance(
+            fromSegment: CGPoint(x: 0, y: 0), CGPoint(x: 0, y: 10),
+            toSegment: CGPoint(x: 3, y: 14), CGPoint(x: 3, y: 20)
+        ) == 5)
+    }
+}
+
 @Suite("Point in polygon")
 struct PolygonContainmentTests {
     private let square = [
@@ -96,22 +123,66 @@ struct StrokeHitTests {
         #expect(StrokeGeometry.stroke(stroke, isEnclosedBy: square) == false)
     }
 
+    /// The eraser's own contact patch, sized as the canvas uses it at 100% zoom.
+    private let tipRadius: CGFloat = 3
+
     @Test("An eraser movement across a stroke is a hit")
     func eraserCrossesStroke() {
         let stroke = StrokeFixtures.stroke(through: [CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)])
-        #expect(StrokeGeometry.stroke(stroke, isCrossedBy: CGPoint(x: 50, y: 0), CGPoint(x: 50, y: 100)))
+        #expect(StrokeGeometry.stroke(
+            stroke, isTouchedBy: CGPoint(x: 50, y: 0), CGPoint(x: 50, y: 100), tipRadius: tipRadius
+        ))
     }
 
     @Test("An eraser movement that misses a stroke is not a hit")
     func eraserMissesStroke() {
         let stroke = StrokeFixtures.stroke(through: [CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)])
-        #expect(StrokeGeometry.stroke(stroke, isCrossedBy: CGPoint(x: 0, y: 200), CGPoint(x: 100, y: 200)) == false)
+        #expect(StrokeGeometry.stroke(
+            stroke, isTouchedBy: CGPoint(x: 0, y: 200), CGPoint(x: 100, y: 200), tipRadius: tipRadius
+        ) == false)
     }
 
     @Test("A single-point dot is erased when the eraser passes close to it")
     func eraserHitsDot() {
         let dot = StrokeFixtures.stroke(through: [CGPoint(x: 50, y: 50)])
-        #expect(StrokeGeometry.stroke(dot, isCrossedBy: CGPoint(x: 0, y: 52), CGPoint(x: 100, y: 52)))
-        #expect(StrokeGeometry.stroke(dot, isCrossedBy: CGPoint(x: 0, y: 90), CGPoint(x: 100, y: 90)) == false)
+        #expect(StrokeGeometry.stroke(
+            dot, isTouchedBy: CGPoint(x: 0, y: 52), CGPoint(x: 100, y: 52), tipRadius: tipRadius
+        ))
+        #expect(StrokeGeometry.stroke(
+            dot, isTouchedBy: CGPoint(x: 0, y: 90), CGPoint(x: 100, y: 90), tipRadius: tipRadius
+        ) == false)
+    }
+
+    @Test("Touching the visible body of a thick stroke erases it without reaching its centreline")
+    func eraserHitsInsideAThickStroke() {
+        let thickLine = StrokeFixtures.stroke(
+            through: [CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)], lineWidth: 40
+        )
+        // Ten points off the centreline is still well inside a 40-point line.
+        #expect(StrokeGeometry.stroke(
+            thickLine, isTouchedBy: CGPoint(x: 40, y: 60), CGPoint(x: 60, y: 60), tipRadius: tipRadius
+        ))
+    }
+
+    @Test("An eraser passing outside a thick stroke's visible edge leaves it alone")
+    func eraserMissesOutsideAThickStroke() {
+        let thickLine = StrokeFixtures.stroke(
+            through: [CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)], lineWidth: 40
+        )
+        // The line's edge is at y = 30; a tip of radius 3 reaches no further than y = 27.
+        #expect(StrokeGeometry.stroke(
+            thickLine, isTouchedBy: CGPoint(x: 40, y: 20), CGPoint(x: 60, y: 20), tipRadius: tipRadius
+        ) == false)
+    }
+
+    @Test("A thin stroke is erased by a tip that only grazes it")
+    func eraserGrazesThinStroke() {
+        let hairline = StrokeFixtures.stroke(
+            through: [CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)], lineWidth: 1
+        )
+        // 3 points clear of the centreline: outside the ink, inside the tip's reach.
+        #expect(StrokeGeometry.stroke(
+            hairline, isTouchedBy: CGPoint(x: 40, y: 53), CGPoint(x: 60, y: 53), tipRadius: tipRadius
+        ))
     }
 }

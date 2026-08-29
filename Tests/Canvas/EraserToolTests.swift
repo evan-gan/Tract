@@ -54,6 +54,48 @@ struct EraserToolTests {
         #expect(viewModel.strokes.count == 1)
     }
 
+    /// Draws one thick horizontal line, wide enough that its visible body extends
+    /// well beyond the samples it was recorded from.
+    private func canvasWithOneThickLine() -> CanvasViewModel {
+        let viewModel = CanvasViewModel()
+        viewModel.selectTool(.pen)
+        viewModel.strokeWidth = 40
+        viewModel.beginStroke(with: StrokeFixtures.point(at: CGPoint(x: 0, y: 50)))
+        viewModel.continueStroke(with: StrokeFixtures.point(at: CGPoint(x: 100, y: 50)))
+        viewModel.endStroke()
+        return viewModel
+    }
+
+    @Test("Touching a thick stroke's visible body erases it without crossing its centre")
+    func erasesThickStrokeOnContact() {
+        let viewModel = canvasWithOneThickLine()
+        // Runs along inside the line's lower half, never reaching y = 50.
+        erase(viewModel, from: CGPoint(x: 20, y: 62), to: CGPoint(x: 80, y: 62))
+        #expect(viewModel.strokes.isEmpty)
+    }
+
+    @Test("Passing outside a thick stroke's visible edge leaves it alone")
+    func spareThickStrokeOutsideItsEdge() {
+        let viewModel = canvasWithOneThickLine()
+        // The drawn edge is at y = 30; this stays clear of it and of the tip.
+        erase(viewModel, from: CGPoint(x: 20, y: 15), to: CGPoint(x: 80, y: 15))
+        #expect(viewModel.strokes.count == 1)
+    }
+
+    @Test("The eraser tip keeps its size on screen as the canvas zooms")
+    func eraserTipStaysAScreenSize() {
+        let viewModel = canvasWithOneLine()
+        // Zoomed in 10x, the tip covers a tenth as much canvas, so a gesture this
+        // far off a 2-point line no longer reaches it.
+        viewModel.canvasTransform.scale = 10
+        erase(viewModel, from: CGPoint(x: 20, y: 53), to: CGPoint(x: 80, y: 53))
+        #expect(viewModel.strokes.count == 1)
+
+        viewModel.canvasTransform.scale = 1
+        erase(viewModel, from: CGPoint(x: 20, y: 53), to: CGPoint(x: 80, y: 53))
+        #expect(viewModel.strokes.isEmpty)
+    }
+
     @Test("An erase gesture that deletes nothing is not worth an undo step")
     func fruitlessEraseAddsNoUndoStep() {
         let viewModel = CanvasViewModel()

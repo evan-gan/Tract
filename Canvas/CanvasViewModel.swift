@@ -35,6 +35,19 @@ final class CanvasViewModel {
     }
 
     // MARK: - Tool state
+
+    /// Radius of the eraser's contact patch in *screen* points, so it stays the
+    /// same size under the hand at every zoom — like a real eraser, which does
+    /// not get bigger because the paper was pushed closer.
+    private static let eraserTipScreenRadius: CGFloat = 3
+
+    /// How far a selection touch may travel, in screen points, and how long it
+    /// may rest, before it stops counting as a tap. Both have to hold: a tap is
+    /// on and off again quickly without going anywhere, and anything else is a
+    /// drag that must not pop the action menu open under the moving nib.
+    private static let selectionTapMovementLimit: CGFloat = 6
+    private static let selectionTapDurationLimit: TimeInterval = 0.4
+
     var activeTool: ToolType = .pen
     // Black by default: the canvas is white paper, so white ink would be invisible.
     var strokeColor: SIMD4<Float> = InkColor.black
@@ -80,11 +93,14 @@ final class CanvasViewModel {
     /// when it is out of range or already touching down.
     private(set) var pencilHoverLocation: CGPoint?
 
-    /// Diameter the hover preview should be drawn at, in screen points. The width
-    /// lives in canvas space, so the preview scales with the zoom — what you see
-    /// hovering is the size the mark will actually be.
+    /// Diameter the hover preview should be drawn at, in screen points — the size
+    /// of the mark the nib is about to make, or of the patch the eraser will
+    /// clear. Ink widths live in canvas space, so that preview scales with the
+    /// zoom; the eraser tip is a screen-space size and stays put.
     var pencilPreviewDiameter: CGFloat {
-        canvasTransform.toScreen(length: strokeWidth)
+        activeTool == .eraser
+            ? Self.eraserTipScreenRadius * 2
+            : canvasTransform.toScreen(length: strokeWidth)
     }
 
     /// Colour of the hover preview: the ink about to be laid down, or a neutral
@@ -124,8 +140,16 @@ final class CanvasViewModel {
 
     var isDraggingSelection: Bool { selectionDragOrigin != nil }
 
+    /// Where the selection's floating action menu is anchored, in canvas space,
+    /// or `nil` when it is closed. Canvas space rather than screen space so the
+    /// menu stays pinned to the ink it acts on while the canvas moves under it.
+    private(set) var selectionMenuAnchor: CGPoint?
+
+    var isSelectionMenuVisible: Bool { selectionMenuAnchor != nil }
+
     func clearSelection() {
         selectedStrokeIDs.removeAll()
+        hideSelectionMenu()
         cancelSelectionDrag()
     }
 
@@ -180,6 +204,9 @@ final class CanvasViewModel {
     /// Stroke list as it stood before the current selection drag, so the move can
     /// be undone in one step.
     private var strokesBeforeSelectionDrag: [Stroke]?
+    /// When the current selection touch landed, so a brief one can be told from a
+    /// deliberate press that happened not to move.
+    private var selectionDragStartTime: Date?
 
     // MARK: - Stroke lifecycle
 
@@ -265,7 +292,10 @@ final class CanvasViewModel {
     private func continueErase(to canvasPoint: CGPoint) {
         guard let previousPoint = lastErasePoint else { return }
         lastErasePoint = canvasPoint
-        strokes.removeAll { StrokeGeometry.stroke($0, isCrossedBy: previousPoint, canvasPoint) }
+        let tipRadius = canvasTransform.toCanvas(length: Self.eraserTipScreenRadius)
+        strokes.removeAll {
+            StrokeGeometry.stroke($0, isTouchedBy: previousPoint, canvasPoint, tipRadius: tipRadius)
+        }
     }
 
     /// Records one undo entry for the whole gesture, and only if it deleted something.
@@ -337,6 +367,7 @@ final class CanvasViewModel {
         guard hasSelection else { return }
         selectionDragOrigin = canvasPoint
         strokesBeforeSelectionDrag = strokes
+        selectionDragStartTime = .now
         selectionDragOffset = .zero
     }
 
@@ -346,14 +377,26 @@ final class CanvasViewModel {
     func updateSelectionDrag(to canvasPoint: CGPoint) {
         guard let origin = selectionDragOrigin else { return }
         selectionDragOffset = canvasPoint - origin
+        // Once the touch is clearly a drag, an open menu is stale chrome sitting
+        // in the way of the ink being moved.
+        if hasTravelledBeyondATap { hideSelectionMenu() }
     }
 
-    /// Writes the drag into the ink as one undo step. A drag that never actually
-    /// moved anything is not an edit, so it pushes nothing.
+    /// Writes the drag into the ink as one undo step — unless the touch was
+    /// really a tap, which asks for the action menu instead of moving anything.
+    /// A drag that never actually moved anything is not an edit either, so it
+    /// pushes nothing.
     func endSelectionDrag() {
         let offset = selectionDragOffset
-        guard let strokesBeforeDrag = strokesBeforeSelectionDrag else { return }
+        guard let strokesBeforeDrag = strokesBeforeSelectionDrag,
+              let dragOrigin = selectionDragOrigin else { return }
+        let wasTap = isTapLikeTouch
         cancelSelectionDrag()
+
+        if wasTap {
+            toggleSelectionMenu(at: dragOrigin)
+            return
+        }
         guard offset != .zero else { return }
 
         undoStack.append(strokesBeforeDrag)
@@ -368,7 +411,65 @@ final class CanvasViewModel {
     func cancelSelectionDrag() {
         selectionDragOrigin = nil
         strokesBeforeSelectionDrag = nil
+        selectionDragStartTime = nil
         selectionDragOffset = .zero
+    }
+
+    /// Whether the touch in flight has already moved too far to be a tap. Measured
+    /// on screen rather than on the canvas so the same flick of the hand reads the
+    /// same way at every zoom.
+    private var hasTravelledBeyondATap: Bool {
+        let travelledOnScreen = canvasTransform.toScreen(
+            length: CGPoint.zero.distance(to: selectionDragOffset)
+        )
+        return travelledOnScreen > Self.selectionTapMovementLimit
+    }
+
+    /// Whether the touch that is ending was a tap: on and off again quickly,
+    /// without going anywhere.
+    private var isTapLikeTouch: Bool {
+        guard let startTime = selectionDragStartTime else { return false }
+        return !hasTravelledBeyondATap
+            && Date.now.timeIntervalSince(startTime) <= Self.selectionTapDurationLimit
+    }
+
+    // MARK: - Selection action menu
+
+    /// Routes a tap on the canvas while something is selected: on the selection
+    /// it offers what can be done with it, anywhere else it drops the selection.
+    func handleSelectionTap(at canvasPoint: CGPoint) {
+        guard hasSelection else { return }
+        if selectionContains(canvasPoint) {
+            toggleSelectionMenu(at: canvasPoint)
+        } else {
+            clearSelection()
+        }
+    }
+
+    /// A second tap closes the menu again, so the user is never stuck with
+    /// chrome over their drawing that only a deselect would clear.
+    func toggleSelectionMenu(at canvasPoint: CGPoint) {
+        withAnimation(.spring(duration: 0.25)) {
+            selectionMenuAnchor = isSelectionMenuVisible ? nil : canvasPoint
+        }
+    }
+
+    func hideSelectionMenu() {
+        guard isSelectionMenuVisible else { return }
+        withAnimation(.spring(duration: 0.25)) { selectionMenuAnchor = nil }
+    }
+
+    /// Removes every selected stroke in one undo step and drops the selection —
+    /// there is nothing left for it to frame.
+    func deleteSelection() {
+        guard hasSelection else { return }
+        let doomedStrokeIDs = selectedStrokeIDs
+
+        undoStack.append(strokes)
+        redoStack.removeAll()
+        strokes.removeAll { doomedStrokeIDs.contains($0.id) }
+        clearSelection()
+        recordEdit()
     }
 
     // MARK: - Undo / redo

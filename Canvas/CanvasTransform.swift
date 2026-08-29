@@ -45,4 +45,11 @@ struct CanvasTransform: Sendable {
         canvasLength * scale
     }
 
+    /// Convert a screen-space length — a fingertip's reach, an eraser tip — to
+    /// canvas units, so a tolerance that should stay a fixed size under the hand
+    /// can be compared against canvas geometry.
+    func toCanvas(length screenLength: CGFloat) -> CGFloat {
+        screenLength / scale
+    }
+
 }

@@ -87,11 +87,12 @@ Tract/
 │   ├── SelectionStyle.swift      # Shared selection tokens: red, dash, standoff, softening
 │   ├── LassoPathView.swift       # The loop being traced, drawn closed and static
 │   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection, traced + cached
+│   ├── SelectionActionMenuView.swift # Floating glass menu a tap on the selection opens (Delete)
 │   └── PencilHoverDotView.swift  # Dot under the hovering nib, at the size the mark will be
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures + TemporaryDirectory for persistence tests
-│   ├── Canvas/                   # Eraser, lasso, selection drag, zoom-scaled widths, pencil hover
+│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths, pencil hover
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
 │   ├── Stroke/                   # StrokeGeometry hits + SelectionRegion standoff/splitting
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
@@ -148,10 +149,19 @@ A pencil gesture always goes through those three calls, whatever the tool.
 **Pen** — the only tool that produces a `Stroke`. One undo step per gesture.
 
 **Eraser** — lays down nothing at all. Each move is tested as a line segment against
-every stroke (`StrokeGeometry.stroke(_:isCrossedBy:_:)`); anything it crosses is
-deleted immediately, mid-gesture. A single-point dot has no segment to cross, so it
-is matched by proximity instead. The whole gesture is one undo step, and pushes one
-only if it actually deleted something.
+every stroke (`StrokeGeometry.stroke(_:isTouchedBy:_:tipRadius:)`); anything it
+touches is deleted immediately, mid-gesture. The whole gesture is one undo step, and
+pushes one only if it actually deleted something.
+
+The hit test measures the *visible* mark, not the bare centreline: ink is drawn
+round-capped at `style.lineWidth`, so a stroke is erased when the swept eraser comes
+within `tipRadius + lineWidth / 2` of the samples it was recorded from. Without the
+half width the eraser slides through the middle of a thick mark leaving it intact.
+The tip radius itself is `CanvasViewModel.eraserTipScreenRadius` (3 screen points)
+converted through `CanvasTransform.toCanvas(length:)`, so the eraser stays the same
+size under the hand at every zoom, and it is what erases a single-point dot — a dot
+is measured as a zero-length segment, needing no special case of its own. The hover
+preview shows that same tip size while the eraser is the active tool.
 
 **Lasso** — collects the traced loop into `CanvasViewModel.lassoPath` (canvas space)
 and renders it through `LassoPathView`, drawn closed because the straight run between
@@ -226,11 +236,41 @@ blank paper. Rules:
   `StrokeGeometry.stroke(_:contains:within:)`.
 - **The drag tracks absolute canvas positions, not accumulated deltas**, so the
   selection stays glued to the nib or finger even if the canvas is zoomed mid-drag.
+- **A tap on the selection is not a drag.** A touch that goes down and up again
+  without travelling more than 6 screen points, inside
+  `CanvasViewModel.selectionTapDurationLimit`, opens the action menu instead of
+  committing a move — see "The selection action menu" below.
 - **The finger drag refuses to begin off the selection.** `CanvasUIView` overrides
   `gestureRecognizerShouldBegin` for its pan recognizer; that is what leaves every
   other finger touch free to pan the canvas instead. It is capped at one touch, so a
   second finger hands the gesture back to the pinch. The mirror image of the same
   gate stops the one-finger canvas pan from starting *on* the selection.
+
+### The selection action menu
+
+Tapping a selection — with the nib or a finger — floats `SelectionActionMenuView`
+over it, offering what can be done with the ink it holds. Today that is **Delete**
+(`CanvasViewModel.deleteSelection()`: one undo step, then the selection is dropped
+because there is nothing left to frame). A second tap on the selection closes the
+menu again; a tap off it drops the selection, as it always did.
+
+- **A tap and a drag must not be confused.** Both arrive through the same
+  begin/update/end path, so `CanvasViewModel` tells them apart at the end of the
+  touch: under `selectionTapMovementLimit` (6 screen points, measured on screen so
+  the same flick reads the same way at every zoom) *and* under
+  `selectionTapDurationLimit` (0.4 s) is a tap, and it opens the menu rather than
+  committing a move. Travelling past the movement limit mid-touch closes an already
+  open menu, so the chrome is never left sitting over ink being dragged. The finger
+  path also has UIKit's own tap recognizer (`CanvasUIView.selectionTapGesture`),
+  which by construction never fires for a touch that travelled.
+- **The anchor is a canvas point** (`CanvasViewModel.selectionMenuAnchor`), offset by
+  the live drag translation at draw time, so the menu stays pinned to the ink while
+  the canvas moves under it. `SelectionActionMenuView` floats it 44 points above the
+  touch and clamps it inside the screen, so a selection tapped at the very top edge
+  still gets a menu the user can reach.
+- **The menu renders whatever actions it is handed.**
+  `CanvasContainerView.selectionActions` is the list; adding an entry there is the
+  whole change.
 
 ---
 
@@ -365,7 +405,8 @@ Apple Pencil → UIView.touchesBegan/Moved/Ended
 
 One finger on an existing selection → UIPanGestureRecognizer (finger only, 1 touch)
   → gated by gestureRecognizerShouldBegin → CanvasViewModel.beginSelectionDrag(at:)
-One finger tapping elsewhere → UITapGestureRecognizer → CanvasViewModel.clearSelection()
+One finger tapping → UITapGestureRecognizer → CanvasViewModel.handleSelectionTap(at:)
+  → on the selection: opens the action menu; off it: clears the selection
 One finger dragging blank paper → FingerPanGestureRecognizer (palm-rejecting)
   → CanvasTransform.translation, solved so the anchored canvas point stays under it
 Two fingers → UIPinchGestureRecognizer (handles pan *and* zoom in one recognizer)
@@ -492,12 +533,14 @@ would be claiming a nib that isn't there.
 | Change | File |
 |---|---|
 | Add a new tool | `ToolType` in `StrokeStyle.swift` (icon + `isDrawingTool` live there), then a branch in each `CanvasViewModel` stroke-lifecycle switch; the dock picks the tool up automatically |
-| Change what the eraser hits | `StrokeGeometry.stroke(_:isCrossedBy:_:)` |
+| Change what the eraser hits | `StrokeGeometry.stroke(_:isTouchedBy:_:tipRadius:)`; the tip size is `CanvasViewModel.eraserTipScreenRadius` |
 | Change what the lasso selects | `StrokeGeometry.stroke(_:isEnclosedBy:)` |
 | Change the selection outline's look or standoff | `SelectionStyle.swift` |
 | Change how the selection outline is shaped | `SelectionRegion.swift` (the dilation and its tracing); `SelectionOutlineView.swift` for the curve smoothing and the re-trace cache |
 | Change what counts as grabbing a selection | `CanvasViewModel.selectionContains(_:)` |
 | Change how a selection is moved | The "Moving a selection" methods in `CanvasViewModel.swift`; the gestures live in `CanvasUIView.swift` |
+| Add an action to the selection menu | `selectionActions` in `CanvasContainerView.swift`; the menu itself renders whatever it is handed |
+| Change what counts as a tap rather than a drag | `selectionTapMovementLimit` / `selectionTapDurationLimit` in `CanvasViewModel.swift` |
 | Change the dock's quick colours | `InkColor.dockPalette` in `InkColor.swift` |
 | Change how the dock snaps | `DockEdge.nearest(to:in:)` in `DockEdge.swift` |
 | Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift` |
