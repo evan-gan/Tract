@@ -15,6 +15,14 @@ enum StrokeRasterizer {
         return strokes.filter { $0.canvasBounds.intersects(viewport) }
     }
 
+    /// Only the strokes that will actually put ink on the page. Bounds taken over
+    /// anything else — a lasso loop, a single tap with no segment to draw — pad an
+    /// export with empty space around marks the viewer will never see.
+    static func inkStrokes(_ strokes: [Stroke], intersecting viewport: CGRect? = nil) -> [Stroke] {
+        self.strokes(strokes, intersecting: viewport)
+            .filter { $0.style.tool.isDrawingTool && $0.points.count >= 2 }
+    }
+
     /// - Parameters:
     ///   - offset: Canvas-space origin that maps to (0, 0) in the context —
     ///     normally the origin of the exported bounds.

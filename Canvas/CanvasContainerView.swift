@@ -9,7 +9,6 @@ struct CanvasContainerView: View {
     var onClose: () -> Void = {}
 
     @Environment(\.scenePhase) private var scenePhase
-    @State private var isExportSheetPresented = false
 
     private var viewModel: CanvasViewModel { session.viewModel }
 
@@ -42,9 +41,6 @@ struct CanvasContainerView: View {
             // Chrome deliberately keeps the safe area: it is what stops the
             // dock from parking under the status bar or the home indicator.
             overlayChrome
-        }
-        .sheet(isPresented: $isExportSheetPresented) {
-            ExportSheetView(document: currentDocument())
         }
         .overlay { loadFailureNotice }
         .task { await session.load() }
@@ -149,7 +145,7 @@ struct CanvasContainerView: View {
                 isSaving: session.hasUnsavedChanges,
                 glassNamespace: glassNamespace,
                 onClose: closeDocument,
-                onExportTapped: { isExportSheetPresented = true }
+                makeDocument: currentDocument
             )
 
             HStack {

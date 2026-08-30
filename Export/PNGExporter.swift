@@ -7,7 +7,7 @@ struct PNGExporter: ExportAdapter {
     let displayName = "PNG"
 
     func export(document: SplineDocument, viewport: CGRect?) throws -> Data {
-        let strokes = StrokeRasterizer.strokes(document.strokes, intersecting: viewport)
+        let strokes = StrokeRasterizer.inkStrokes(document.strokes, intersecting: viewport)
         guard !strokes.isEmpty else { throw ExportError.noStrokes }
 
         let bounds = viewport ?? StrokeRasterizer.unionBounds(of: strokes)

@@ -15,8 +15,16 @@ struct Stroke: Identifiable, Codable, Sendable {
     /// Bounding box in canvas space, updated incrementally as points arrive.
     /// Used for spatial indexing and export viewport clipping.
     var canvasBounds: CGRect
+    /// Which problem this stroke is part of, addressed outermost level first —
+    /// `[1, a, ii]` for problem 1, part a, sub-part ii. Nil until the user tags it.
+    /// `ProblemGrouping` gathers strokes by this tag so an export can lay each
+    /// problem out in its own labelled cell.
+    ///
+    /// Optional on purpose: the synthesised decoder reads it with
+    /// `decodeIfPresent`, so documents saved before tagging existed still load.
+    var problemTag: ProblemTag?
 
-    init(id: UUID = UUID(), sessionID: UUID, style: StrokeStyle) {
+    init(id: UUID = UUID(), sessionID: UUID, style: StrokeStyle, problemTag: ProblemTag? = nil) {
         self.id = id
         self.sessionID = sessionID
         self.startTime = .now
@@ -25,6 +33,7 @@ struct Stroke: Identifiable, Codable, Sendable {
         self.style = style
         self.isComplete = false
         self.canvasBounds = .null
+        self.problemTag = problemTag
     }
 
     /// Appends a point and expands the bounding box to include it.

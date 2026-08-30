@@ -24,7 +24,7 @@ be opened.** Everything below runs headless from the shell.
 ./scripts/test.sh ["iPad Pro 11-inch (M5)"]
 
 # Screenshot a screen on a simulator — light, dark, or both
-./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library]
+./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportmenu]
 ```
 
 `scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
@@ -37,7 +37,9 @@ simulator, sets its light/dark appearance, runs the capture test in
 `UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
 into `build/screenshots/<screen>-<appearance>.png` — read that file to see the change.
 
-Two screens are wired up: `canvas` (the default) and `library` (the document grid).
+Three screens are wired up: `canvas` (the default), `library` (the document grid),
+and `exportmenu` (the Export control expanded, which the canvas shot cannot show
+because the button is collapsed there).
 
 Do not hand-roll this. It exists because the pieces are non-obvious:
 

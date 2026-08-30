@@ -59,10 +59,10 @@ Tract/
 │   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–500%, screen↔canvas conversion
 │
 ├── Toolbar/                      # Fixed top chrome (close, title, save dot, export)
-│   ├── TopBarView.swift          # Assembles the top pill + Export button
+│   ├── TopBarView.swift          # Assembles the top pill + Export menu
 │   ├── DocumentTitleView.swift   # Editable title pill
-│   ├── SaveIndicatorView.swift   # Quiet dot showing there is unsaved work
-│   └── ExportButton.swift        # Opens ExportSheetView
+│   └── SaveIndicatorView.swift   # Quiet dot showing there is unsaved work
+│                                 # (the Export control itself is Export/ExportMenu.swift)
 │
 ├── ToolDock/                     # The movable floating tool bar
 │   ├── FloatingToolDock.swift    # Placement + drag/snap between screen edges
@@ -91,10 +91,11 @@ Tract/
 │   └── PencilHoverDotView.swift  # Dot under the hovering nib, at the size the mark will be
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
-│   ├── Support/                  # StrokeFixtures + TemporaryDirectory for persistence tests
+│   ├── Support/                  # StrokeFixtures, TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
 │   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths, pencil hover
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
-│   ├── Stroke/                   # StrokeGeometry hits + SelectionRegion standoff/splitting
+│   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
+│   ├── Export/                   # Paper/grid geometry, ink fitting, problem grouping, PDF output
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
 │   ├── ToolDockDragUITests.swift # The dock's drag/snap gesture
@@ -107,6 +108,9 @@ Tract/
 │   ├── StrokeGeometry.swift      # Segment intersection, point-in-polygon, eraser/lasso hit tests
 │   ├── SelectionRegion.swift     # Dilates the selected ink into the contours the frame is drawn from
 │   ├── StrokeStyle.swift         # Color (SIMD4<Float>), width, opacity, ToolType
+│   ├── ProblemTag.swift          # Ordered levels ([1, a, ii]); Comparable parent→child
+│   ├── ProblemLabelStyle.swift   # Notations (number/letter/roman) as values + NumeralNotation
+│   ├── ProblemTagFormatter.swift # Tag → printed text, with a swappable style table
 │   └── InkColor.swift            # Named ink colours + the dock's quick palette (default ink: black)
 │
 ├── Document/                     # Document model + persistence
@@ -122,11 +126,17 @@ Tract/
 │
 ├── Export/
 │   ├── ExportAdapter.swift       # Protocol all exporters conform to
-│   ├── ExportSheetView.swift     # Format picker → system share sheet
+│   ├── ExportMenu.swift          # Export button that expands in place into formats → share sheet
+│   ├── ExportFileNaming.swift    # Document title → safe file name
 │   ├── StrokeRasterizer.swift    # Shared strokes → CGContext drawing (PNG, PDF, thumbnails)
+│   ├── InkFitTransform.swift     # Shared "scale ink to fit this box and centre it" maths
 │   ├── ThumbnailRenderer.swift   # Strokes → the fixed-size card preview PNG
 │   ├── SVGExporter.swift         # Strokes → SVG paths with data-* AI attributes
-│   ├── PDFExporter.swift         # UIGraphicsPDFRenderer
+│   ├── PaperSize.swift           # Standard print paper sizes in PDF points + orientation
+│   ├── PDFExportOptions.swift    # Paper, margins, scale ceiling, layout + problem-table grid
+│   ├── ProblemGrouping.swift     # Strokes → ProblemGroups, keyed on Stroke.problemTag
+│   ├── PDFPageRenderer.swift     # Paints PDF pages: paper, cell borders, labels, fitted ink
+│   ├── PDFExporter.swift         # ExportAdapter over the above; whole-drawing or problem table
 │   └── PNGExporter.swift         # UIGraphicsImageRenderer
 │
 ├── Utilities/
@@ -528,6 +538,114 @@ would be claiming a nib that isn't there.
 
 ---
 
+## Exporting to PDF
+
+A PDF export is a **print job**, not a screenshot of the canvas. Two consequences
+drive the whole design in `Export/`:
+
+- **The page is standard paper.** `PaperSize` holds US Letter, Legal, Tabloid,
+  A3, A4 and A5 in PDF points (72 per inch), so a page prints at true size.
+  Defaults: US Letter, portrait, 1 inch margins.
+- **The page box always starts at (0, 0).** This is what the earlier exporter got
+  wrong. It built the page from the ink's own canvas bounds, so a drawing made
+  10,000 points out produced a media box at (10000, …) while the ink was drawn at
+  the origin — off-page, and the PDF opened blank. Ink is now moved into the page
+  with `InkFitTransform`, never by moving the page to the ink.
+
+Ink is scaled to fit its box and centred, clipped so it can never bleed past a
+margin or into a neighbouring cell. `PDFExportOptions.maximumScale` caps
+enlargement; at the default of 1 the drawing prints at its canvas size and is
+only ever scaled *down*. Raise it to let small work fill the page or its cell.
+
+`Tests/Export/PDFExporterTests.swift` guards the blank-page bug by rasterising
+the finished page through `PDFPageInspector` and asserting it has ink on it —
+page count and media box alone would have passed against the broken version.
+
+## Problem tagging
+
+`Stroke.problemTag` is an optional `ProblemTag` marking which problem a stroke is
+part of. It is `nil` until something sets it; the decoder reads it with
+`decodeIfPresent`, so documents saved before it existed still load.
+
+**The export pipeline handles tags today; nothing in the UI writes them yet.**
+Wiring up tagging means setting `problemTag` on strokes (the lasso selection is
+the obvious hook) — no export change is needed.
+
+### The format, and why it is shaped this way
+
+A tag is an **ordered list of levels, outermost first**: `[1, a, ii]` is problem
+1, part a, sub-part ii. Each level is a `ProblemLabelComponent`:
+
+```swift
+struct ProblemLabelComponent {
+    var styleID: String       // "number", "lowercaseRoman", … — not a closed enum
+    var ordinal: Int          // 1-based position; the ONLY thing sorting reads
+    var customText: String?   // literal override for a level following no scheme
+}
+```
+
+Three decisions carry the extensibility, and none of them can be changed later
+without a migration, so they are worth understanding:
+
+- **Levels are a list, not named fields.** Adding a fourth or fifth level of
+  nesting needs no format change. `ProblemTag.prefix(_:)` cuts a tag to an
+  ancestor's address, which is how an export groups parts under their problem.
+- **`ordinal` is stored, not the written form.** Sorting compares ordinals level
+  by level, so roman numerals order by value — the flat-string sort this replaced
+  put `ix` (9) before `vi` (6). A notation added later sorts correctly with no
+  change to the sorting code.
+- **`styleID` is a string, not an enum case.** A document written by a build that
+  knows a notation this one does not still decodes, sorts, and re-saves intact.
+  A closed `Codable` enum would throw on the unknown case and take the whole
+  document down. Unknown styles render as the bare ordinal.
+
+`ProblemTag` is `Comparable`: parent before child, sibling by ordinal, comparing
+outermost level first — `1, 1a, 1a(i), 1a(ii), 1b, 2, 10`. Ties between different
+notations at the same ordinal break on `styleID` then `customText`, purely so the
+order is deterministic; that carries no meaning.
+
+### Notations
+
+`ProblemLabelStyle` is a **struct holding format/parse closures**, not an enum, so
+a new notation is a value someone constructs rather than a case to add and a
+switch to exhaust. Built-ins: `number` (1, 2, 3), `lowercaseLetter` /
+`uppercaseLetter` (a, b, c — bijective base 26, so 27 is "aa"), `lowercaseRoman` /
+`uppercaseRoman` (i, ii, iii — canonical subtractive spellings; "iiii" and "ic"
+are rejected on parse). `NumeralNotation` holds the conversions.
+
+`ProblemTagFormatter` renders a tag for display, joining levels with a
+configurable separator (default `.` → "1.b.iii"). It carries its own style table
+rather than reading a global, so a caller can add or override notations without
+mutating shared state. Falls back through custom text → the style's notation →
+the bare ordinal, so a level always prints something readable.
+
+```swift
+var styles = ProblemLabelStyle.builtIn
+styles[greek.id] = greek                          // a notation the app never shipped
+let formatter = ProblemTagFormatter(styles: styles, levelSeparator: "")
+```
+
+### In the PDF
+
+`PDFPageLayout.problemTable(ProblemTableLayout)` prints one labelled cell per
+group on a `columns` x `rows` grid, flowing onto extra pages as groups run out of
+cells. `ProblemTableLayout.groupingDepth` decides what "a group" means: nil gives
+every sub-part its own cell, `1` collects all of problem 1's parts into one cell.
+`PDFPageLayout.wholeDrawing` is the default and ignores tags entirely.
+
+```swift
+var layout = ProblemTableLayout(columns: 2, rows: 3)
+layout.groupingDepth = 1     // one cell per problem, parts drawn together
+var options = PDFExportOptions()
+options.maximumScale = 20    // work written small on a big canvas fills its cell
+options.layout = .problemTable(layout)
+let data = try PDFExporter(options: options).export(document: document, viewport: nil)
+```
+
+Still open: sub-parts currently share their problem's cell as one drawing when
+grouped by depth. Laying them out as *nested* sub-cells with their own headings
+is a layout change in `PDFPageRenderer`, not a format change.
+
 ## Where to make common changes
 
 | Change | File |
@@ -551,8 +669,16 @@ would be claiming a nib that isn't there.
 | Change how the canvas is panned, or tune palm rejection | `FingerPanArbiter.swift` for the thresholds and rules; `FingerPanGestureRecognizer.swift` for the touch bookkeeping |
 | Change the zoom limits | `minimumScale` / `maximumScale` in `CanvasTransform.swift` |
 | Change what Apple Pencil's double tap does | `CanvasViewModel.togglePencilShortcutTool()` |
-| Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, add to `ExportSheetView.adapters` |
+| Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, add to `ExportMenu.adapters` |
+| Change the export button or its expanding format options | `ExportMenu.swift` |
 | Change how ink is rasterised (PNG, PDF, thumbnails) | `StrokeRasterizer.swift` |
+| Change the PDF's paper size, orientation or margins | `PDFExportOptions.swift`; add a size to `PaperSize.standardSizes` |
+| Change the problem table's grid, labels or borders | `ProblemTableLayout` in `PDFExportOptions.swift`; drawing in `PDFPageRenderer.swift` |
+| Change how strokes are bucketed into problems | `ProblemGrouping.swift` (reads `Stroke.problemTag`); `ProblemTableLayout.groupingDepth` picks the level |
+| Add a problem numbering notation (Greek, ①②③, …) | New `ProblemLabelStyle` value + register it in a `ProblemTagFormatter`; no stored-format change |
+| Change how a problem tag reads on the page | `ProblemTagFormatter.swift` (`levelSeparator`, fallbacks) |
+| Change how problems sort | `ProblemTag.<` — compares ordinals outermost level first |
+| Wire up problem tagging in the UI | Set `Stroke.problemTag` to a `ProblemTag`; the export side already handles it — see "Problem tagging" below |
 | Change the document card's preview size or fit | `ThumbnailRenderer.swift` |
 | Change the document card's layout | `DocumentCard.swift` |
 | Change the autosave delay | `autosaveDelay` in `DocumentEditorSession.swift` |

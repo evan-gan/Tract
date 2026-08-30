@@ -5,6 +5,7 @@
 #   ./scripts/screenshot.sh                          # canvas, both appearances
 #   ./scripts/screenshot.sh dark                     # canvas, just dark
 #   ./scripts/screenshot.sh both "" library          # document library
+#   ./scripts/screenshot.sh light "" exportmenu      # Export dropdown, open
 #   ./scripts/screenshot.sh both "iPad Air 13-inch (M3)"
 #
 # PNGs land in build/screenshots/<screen>-<appearance>.png. The captures live in
@@ -32,7 +33,8 @@ SCREEN="${3:-canvas}"
 case "$SCREEN" in
   canvas)  TEST_METHOD=testCaptureCanvas ;;
   library) TEST_METHOD=testCaptureLibrary ;;
-  *)       fail "Unknown screen '${SCREEN}' — use canvas or library." ;;
+  exportmenu) TEST_METHOD=testCaptureExportMenu ;;
+  *)       fail "Unknown screen '${SCREEN}' — use canvas, library or exportmenu." ;;
 esac
 
 SNAPSHOT_TEST="TractUITests/CanvasSnapshotUITests/$TEST_METHOD"

@@ -43,6 +43,32 @@ final class CanvasSnapshotUITests: XCTestCase {
         attachScreenshot(named: "library")
     }
 
+    /// Captures the Export control expanded, which is the only way to see the
+    /// format options — the plain canvas shot shows just the collapsed button.
+    func testCaptureExportMenu() {
+        let app = XCUIApplication()
+        app.launchArguments.append("-TractSeedSampleDocuments")
+        app.launch()
+
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Wave study'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15),
+                      "The seeded library should contain the Wave study drawing.")
+        card.tap()
+
+        let exportButton = app.buttons["Export"].firstMatch
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
+                      "The canvas should offer an Export button.")
+        exportButton.tap()
+
+        XCTAssertTrue(app.buttons["Export as PDF"].firstMatch.waitForExistence(timeout: 10),
+                      "The control should have expanded before the shot is taken.")
+        // The formats exist the instant the state flips, but the glass is still
+        // widening; shooting now catches a half-morphed pill.
+        Thread.sleep(forTimeInterval: 1.5)
+
+        attachScreenshot(named: "exportmenu")
+    }
+
     /// `.keepAlways` matters: without it the attachment is discarded for a
     /// passing test, and the script would find an empty result bundle.
     private func attachScreenshot(named name: String) {

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Document chrome at the top of the screen: back and title in one glass pill,
-/// with Export as its own prominent glass surface beside it.
+/// with the Export menu as its own prominent glass surface beside it.
 /// Selection lives on the lasso tool in the dock, not up here.
 /// Undo/redo live on the movable tool dock instead.
 struct TopBarView: View {
@@ -11,12 +11,13 @@ struct TopBarView: View {
     let isSaving: Bool
     let glassNamespace: Namespace.ID
     let onClose: () -> Void
-    let onExportTapped: () -> Void
+    /// Handed to the export menu, which calls it only when a format is picked.
+    let makeDocument: () -> SplineDocument
 
     var body: some View {
         HStack(spacing: 10) {
             controlPill
-            ExportButton(onTapped: onExportTapped)
+            ExportMenu(makeDocument: makeDocument)
                 .glassEffectID("export", in: glassNamespace)
         }
     }

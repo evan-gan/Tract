@@ -31,32 +31,11 @@ enum ThumbnailRenderer {
             paperColor.setFill()
             context.fill(CGRect(origin: .zero, size: size))
 
-            let fit = fitTransform(for: inkBounds)
-            context.cgContext.concatenate(fit)
+            let contentRect = CGRect(origin: .zero, size: size).insetBy(dx: contentInset, dy: contentInset)
+            context.cgContext.concatenate(
+                InkFitTransform.centring(inkBounds, in: contentRect, maximumScale: maximumScale)
+            )
             StrokeRasterizer.draw(strokes, in: context.cgContext, offset: inkBounds.origin)
         }
-    }
-
-    /// Scales the ink to fit inside the card's inset area and centres it.
-    /// The returned transform expects stroke coordinates already offset by
-    /// `inkBounds.origin`, i.e. starting at (0, 0).
-    private static func fitTransform(for inkBounds: CGRect) -> CGAffineTransform {
-        let available = size.insetBy(contentInset)
-        // A perfectly horizontal or vertical drawing has zero extent on one axis;
-        // fall back to the other so it still lands on the card instead of dividing by zero.
-        let widthScale = inkBounds.width > 0 ? available.width / inkBounds.width : .greatestFiniteMagnitude
-        let heightScale = inkBounds.height > 0 ? available.height / inkBounds.height : .greatestFiniteMagnitude
-        let scale = min(widthScale, heightScale, maximumScale)
-
-        let scaledSize = CGSize(width: inkBounds.width * scale, height: inkBounds.height * scale)
-        return CGAffineTransform(translationX: (size.width - scaledSize.width) / 2,
-                                 y: (size.height - scaledSize.height) / 2)
-            .scaledBy(x: scale, y: scale)
-    }
-}
-
-private extension CGSize {
-    func insetBy(_ inset: CGFloat) -> CGSize {
-        CGSize(width: max(width - inset * 2, 1), height: max(height - inset * 2, 1))
     }
 }
