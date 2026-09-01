@@ -27,20 +27,3 @@ struct DockDivider: View {
             )
     }
 }
-
-/// Grip that marks where the dock can be dragged from. Purely an affordance —
-/// the drag gesture covers the whole dock.
-struct DockGrabHandle: View {
-    let axis: Axis
-
-    var body: some View {
-        Capsule()
-            .fill(.secondary.opacity(0.35))
-            .frame(
-                width: axis == .horizontal ? 5 : 22,
-                height: axis == .horizontal ? 22 : 5
-            )
-            .frame(width: 16, height: 16)
-            .accessibilityLabel("Drag to move the tool bar")
-    }
-}

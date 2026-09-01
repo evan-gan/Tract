@@ -15,43 +15,42 @@ final class ToolDockDragUITests: XCTestCase {
     }
 
     func testDraggingTheDockToTheLeftEdgeMovesItOffTheBottom() {
-        let dockedAtBottom = handleFrame()
+        let dockedAtBottom = dockFrame()
         XCTAssertGreaterThan(dockedAtBottom.midY, app.frame.height / 2,
                              "The dock starts parked on the bottom edge.")
 
-        dragHandle(to: CGVector(dx: 0.06, dy: 0.5))
+        dragDock(to: CGVector(dx: 0.06, dy: 0.5))
 
-        let dockedOnTheSide = handleFrame()
+        let dockedOnTheSide = dockFrame()
         XCTAssertLessThan(dockedOnTheSide.midX, dockedAtBottom.midX,
                           "The dock should have moved toward the left edge.")
         XCTAssertLessThan(dockedOnTheSide.midY, dockedAtBottom.midY,
                           "The dock should have left the bottom edge.")
-        // The grip is drawn across the dock, so a vertical dock has a wide grip.
-        XCTAssertGreaterThan(dockedOnTheSide.width, dockedOnTheSide.height,
+        XCTAssertGreaterThan(dockedOnTheSide.height, dockedOnTheSide.width,
                              "Parked on a side edge, the dock should have re-flowed into a column.")
     }
 
     func testDraggingTheDockToTheTopEdgeKeepsItHorizontal() {
-        let dockedAtBottom = handleFrame()
+        let dockedAtBottom = dockFrame()
 
-        dragHandle(to: CGVector(dx: 0.5, dy: 0.18))
+        dragDock(to: CGVector(dx: 0.5, dy: 0.18))
 
-        let dockedOnTop = handleFrame()
+        let dockedOnTop = dockFrame()
         XCTAssertLessThan(dockedOnTop.midY, dockedAtBottom.midY / 2,
                           "The dock should have moved to the top edge.")
-        XCTAssertGreaterThan(dockedOnTop.height, dockedOnTop.width,
+        XCTAssertGreaterThan(dockedOnTop.width, dockedOnTop.height,
                              "Parked on the top edge, the dock should still be a row.")
     }
 
     /// The dock is almost entirely buttons, so a finger grabbing "the bar" nearly
     /// always lands on one. If the drag does not outrank them, the dock can only
-    /// be moved from the narrow grip — reachable with a pencil tip, not a finger.
+    /// be moved from the slivers of padding between its controls.
     func testDraggingFromAToolButtonMovesTheDock() {
-        let dockedAtBottom = handleFrame()
+        let dockedAtBottom = dockFrame()
 
         drag(app.buttons["Pen"].firstMatch, to: CGVector(dx: 0.94, dy: 0.5))
 
-        let dockedOnTheSide = handleFrame()
+        let dockedOnTheSide = dockFrame()
         XCTAssertGreaterThan(dockedOnTheSide.midX, dockedAtBottom.midX,
                              "Dragging from a tool button should have moved the dock right.")
         XCTAssertLessThan(dockedOnTheSide.midY, dockedAtBottom.midY,
@@ -93,17 +92,18 @@ final class ToolDockDragUITests: XCTestCase {
     }
 
     /// Re-queries every time: an XCUIElement can otherwise serve a stale frame.
-    private func handleFrame() -> CGRect {
-        let handle = app.otherElements["Drag to move the tool bar"].firstMatch
-        XCTAssertTrue(handle.waitForExistence(timeout: 15), "The dock's drag handle should be on screen.")
-        return handle.frame
+    private func dockFrame() -> CGRect {
+        let dock = app.otherElements["toolDock"].firstMatch
+        XCTAssertTrue(dock.waitForExistence(timeout: 15), "The tool dock should be on screen.")
+        return dock.frame
     }
 
     /// A slow drag with a hold: SwiftUI needs the intermediate touch events, and
     /// the hold lets the settle animation — which runs for the better part of a
-    /// second — finish before the frame is read.
-    private func dragHandle(to destination: CGVector) {
-        drag(app.otherElements["Drag to move the tool bar"].firstMatch, to: destination)
+    /// second — finish before the frame is read. Started from the dock's own
+    /// edge padding so the touch does not land on one of its controls.
+    private func dragDock(to destination: CGVector) {
+        drag(app.otherElements["toolDock"].firstMatch, to: destination)
     }
 
     /// Drags from the centre of `origin` to a normalised point on screen.

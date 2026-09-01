@@ -53,8 +53,8 @@ struct FloatingToolDock: View {
     /// Attached as a **high-priority** gesture, which is what lets the dock be
     /// dragged from anywhere on the bar rather than only from the slivers between
     /// its controls. Nearly every point on the dock is a button, and a plain
-    /// `.gesture` loses to its children: the drag then only started on the 16pt
-    /// grip, which a pencil tip can hit and a fingertip generally cannot.
+    /// `.gesture` loses to its children: the drag would then only start in the
+    /// slivers of padding, which a pencil tip can hit and a fingertip cannot.
     ///
     /// Taps survive because of the minimum distance — the drag never recognises
     /// without real movement, so the button underneath keeps the touch. Once it

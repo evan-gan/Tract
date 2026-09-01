@@ -69,9 +69,10 @@ Tract/
 │   ├── FloatingToolDock.swift    # Placement + drag/snap between screen edges
 │   ├── ToolDockView.swift        # Bar contents; re-flows row <-> column
 │   ├── DockEdge.swift            # Edge enum: quadrant maths, axis, alignment
-│   ├── DockLayout.swift          # Axis-aware stack helper, divider, grab handle
-│   ├── ToolCarouselView.swift    # The run of tool buttons
-│   ├── DockToolButton.swift      # One tool; active tool tints and lifts
+│   ├── DockLayout.swift          # Axis-aware stack helper and divider
+│   ├── ToolCarouselView.swift    # The run of tool buttons; owns the selector's glass container
+│   ├── DockToolButton.swift      # One tool; the active one wears the untinted glass selector
+│   ├── ToolIconView.swift        # Hand-drawn pen (tip filled with the live ink) + lasso glyphs, SF Symbol eraser
 │   ├── DockColorRail.swift       # Quick ink colours + colour-wheel button
 │   ├── StrokeWeightDockButton.swift  # Opens the weight picker popover
 │   ├── StrokeWeightFlyout.swift  # 5-option weight picker (popover content)
@@ -518,11 +519,14 @@ weight, and the quick ink colours. Rules that hold when changing it:
   re-park, the row↔column re-flow and the offset unwinding all ride one slow spring
   (`settleAnimation`), so it reads as one object settling rather than several parts
   rearranging. Re-flowing mid-drag was the old behaviour and read as a flicker.
-- **Drag from anywhere on the bar, grip or button.** The gesture is attached to the
+- **Drag from anywhere on the bar.** The gesture is attached to the
   whole dock as a `highPriorityGesture`, so it outranks the buttons that cover nearly
-  all of it — a plain `.gesture` leaves only the 16pt grip and the slivers between
-  controls reliably draggable, which a pencil tip can hit and a fingertip often
-  cannot. The minimum distance is what keeps taps working: the drag never recognises
+  all of it — a plain `.gesture` leaves only the slivers between controls reliably
+  draggable, which a pencil tip can hit and a fingertip often
+  cannot. There is deliberately no grab-handle glyph: the whole bar is the handle,
+  and the dot only added visual noise. `ToolDockView`'s root carries the
+  `toolDock` accessibility identifier, which is how the UI tests read the bar's
+  frame and orientation. The minimum distance is what keeps taps working: the drag never recognises
   without real movement, and once it does, the button under the touch is cancelled,
   so dropping the dock on a swatch cannot also change the ink. All three behaviours
   are covered by `ToolDockDragUITests`, which drives finger-type touches.
@@ -880,6 +884,8 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change what counts as a tap rather than a drag | `selectionTapMovementLimit` / `selectionTapDurationLimit` in `CanvasViewModel.swift` |
 | Change the dock's quick colours | `InkColor.dockPalette` in `InkColor.swift` |
 | Change how the dock snaps | `DockEdge.nearest(to:in:)` in `DockEdge.swift` |
+| Change how the active tool is marked | `DockToolButton.swift` — the glass selector, and the `GlassEffectContainer` it needs in `ToolCarouselView.swift` |
+| Change a tool glyph, or what the pen's tip shows | `ToolIconView.swift`; the ink is threaded in from `viewModel.strokeColor` via `ToolDockView` → `ToolCarouselView` → `DockToolButton` |
 | Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift` |
 | Change how ink weight responds to zoom | `CanvasTransform.toScreen(length:)` |
 | Change the hover preview's look | `PencilHoverDotView.swift`; its size and colour come from `CanvasViewModel.pencilPreviewDiameter` / `pencilPreviewColor` |

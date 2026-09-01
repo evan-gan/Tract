@@ -19,7 +19,7 @@ final class CanvasSnapshotUITests: XCTestCase {
                       "The document list should offer a way to start a drawing.")
         newDocument.tap()
 
-        XCTAssertTrue(app.otherElements["Drag to move the tool bar"].firstMatch
+        XCTAssertTrue(app.otherElements["toolDock"].firstMatch
             .waitForExistence(timeout: 15),
                       "The canvas chrome should be on screen before the shot is taken.")
 

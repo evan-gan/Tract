@@ -10,8 +10,6 @@ struct ToolDockView: View {
     var body: some View {
         let layout = DockLayout.stack(along: edge.axis, spacing: 4)
         return layout {
-            DockGrabHandle(axis: edge.axis)
-
             UndoRedoView(
                 axis: edge.axis,
                 canUndo: viewModel.canUndo,
@@ -25,6 +23,10 @@ struct ToolDockView: View {
             ToolCarouselView(
                 activeTool: viewModel.activeTool,
                 edge: edge,
+                // strokeColor rather than selectedInkColor: the pen's tip should
+                // still show the ink it will resume with while the eraser or
+                // lasso is in hand, and that one goes nil there.
+                inkColor: viewModel.strokeColor.swiftUIColor,
                 onSelect: selectTool
             )
 
@@ -45,6 +47,11 @@ struct ToolDockView: View {
         .padding(edge.axis == .horizontal ? .horizontal : .vertical, 10)
         .padding(edge.axis == .horizontal ? .vertical : .horizontal, 5)
         .glassChrome(cornerRadius: 26)
+        // `.contain` keeps every control inside individually addressable; the
+        // identifier is what lets the drag UI tests read the whole bar's frame
+        // now that there is no grab handle to probe.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("toolDock")
     }
 
     // MARK: - Popover hosts

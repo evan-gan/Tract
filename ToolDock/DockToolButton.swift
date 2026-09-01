@@ -1,35 +1,49 @@
 import SwiftUI
 
-/// One tool in the dock's carousel. The active tool tints and lifts out of the
-/// dock toward the canvas, the way a pen pulled from a real tray would.
+/// One tool in the dock's carousel. The active tool sits inside a sliding
+/// glass selector rather than lifting or popping — the selector's own motion
+/// between tools is what reads as "this one now".
 struct DockToolButton: View {
     let tool: ToolType
     let isActive: Bool
-    /// Unit vector pointing away from the docked edge.
-    let liftDirection: CGSize
+    /// Shared across the carousel so the selector morphs from one tool to the
+    /// next instead of fading out and back in.
+    let selectionNamespace: Namespace.ID
+    /// Current ink, shown in the pen's tip so the dock says what it will draw.
+    let inkColor: Color
     let onTapped: () -> Void
 
-    private static let liftDistance: CGFloat = 5
+    private static let selectorShape = RoundedRectangle(cornerRadius: 13, style: .continuous)
 
+    @ViewBuilder
     var body: some View {
+        // Only the active tool carries glass, and every button hands it the same
+        // effect id, so switching tools morphs the one pill across the carousel
+        // instead of cross-fading two of them.
+        if isActive {
+            button
+                .glassEffect(.regular, in: Self.selectorShape)
+                .glassEffectID("toolSelector", in: selectionNamespace)
+        } else {
+            button
+        }
+    }
+
+    private var button: some View {
         Button(action: onTapped) {
-            Image(systemName: tool.iconName)
-                .font(.system(size: 19))
+            ToolIconView(tool: tool, color: iconColor, inkColor: inkColor)
                 .frame(width: DockLayout.itemSize, height: DockLayout.itemSize)
-                .contentShape(.rect(cornerRadius: 12))
+                .contentShape(Self.selectorShape)
         }
         .buttonStyle(.plain)
-        // Hierarchical rather than `Color.secondary`: the dock's glass sets the
-        // literal label colours, and only the hierarchical levels inherit them.
-        // The active tint is literal, so it reads the same in both schemes.
-        .foregroundStyle(isActive ? AnyShapeStyle(AppTint.active) : AnyShapeStyle(.secondary))
-        .background(isActive ? AppTint.active.opacity(0.22) : Color.clear,
-                    in: .rect(cornerRadius: 12))
-        .offset(
-            x: isActive ? liftDirection.width * Self.liftDistance : 0,
-            y: isActive ? liftDirection.height * Self.liftDistance : 0
-        )
         .accessibilityLabel(tool.displayName)
         .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    // Hierarchical rather than literal colours: the dock's glass sets the actual
+    // label levels, and only the hierarchical styles inherit them, so these match
+    // the undo/redo and stroke-weight buttons in both colour schemes.
+    private var iconColor: AnyShapeStyle {
+        isActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
     }
 }
