@@ -20,11 +20,82 @@ final class CanvasViewModel {
         revision += 1
     }
 
+    // MARK: - Problem tagging
+
+    /// The document's problem tree and which node new ink is filed under. Owned
+    /// here because both are canvas state: the tree is document content, and the
+    /// selection decides what every stroke laid down next is tagged with.
+    let problems = ProblemTaggingModel()
+
+    init() {
+        // Structural edits to the tree have to reach the disk the same way ink
+        // does; the picker has no other route to the autosave.
+        problems.onOutlineChanged = { [weak self] in self?.recordEdit() }
+    }
+
+    /// How the canvas paints its ink under the tagging modes — a tint per
+    /// problem, and the dimming that makes the retag target obvious.
+    var problemInkStyling: ProblemInkStyling {
+        problems.inkStyling(for: strokes, revision: revision)
+    }
+
+    /// How close, in screen points, a retag tap has to land to a mark to count
+    /// as hitting it. Generous on purpose: the target is handwriting, which is
+    /// mostly the white space between thin lines.
+    private static let retagHitScreenRadius: CGFloat = 12
+
+    /// Files every stroke under the touch with the current tag. Runs on the
+    /// touch that starts the gesture and on every sample after it, so a wrong
+    /// tag can be swept away rather than tapped away one mark at a time.
+    private func retagStrokes(at canvasPoint: CGPoint) {
+        let radius = canvasTransform.toCanvas(length: Self.retagHitScreenRadius)
+        let targetNodeID = problems.selectedNodeID
+        var changedAnything = false
+
+        for index in strokes.indices {
+            guard strokes[index].style.tool.isDrawingTool,
+                  strokes[index].problemNodeID != targetNodeID,
+                  StrokeGeometry.stroke(strokes[index], contains: canvasPoint, within: radius)
+            else { continue }
+            strokes[index].problemNodeID = targetNodeID
+            changedAnything = true
+        }
+        if changedAnything { retagGestureChangedInk = true }
+    }
+
+    /// Stroke list as it stood before the current retag gesture, so a sweep is
+    /// one undo step — and only if it actually re-filed something.
+    private var strokesBeforeRetag: [Stroke]?
+    private var retagGestureChangedInk = false
+
+    private func beginRetag(at canvasPoint: CGPoint) {
+        strokesBeforeRetag = strokes
+        retagGestureChangedInk = false
+        retagStrokes(at: canvasPoint)
+    }
+
+    private func endRetag() {
+        defer {
+            strokesBeforeRetag = nil
+            retagGestureChangedInk = false
+        }
+        guard retagGestureChangedInk, let before = strokesBeforeRetag else { return }
+        undoStack.append(before)
+        redoStack.removeAll()
+        recordEdit()
+    }
+
     /// Replaces all canvas state with a document loaded from disk. Undo history
     /// belongs to the editing session, not the document, so it starts empty:
     /// there is nothing sensible for a first undo to go back to.
-    func restore(strokes loadedStrokes: [Stroke], origin: CGPoint, scale: CGFloat) {
+    func restore(
+        strokes loadedStrokes: [Stroke],
+        outline: ProblemOutline,
+        origin: CGPoint,
+        scale: CGFloat
+    ) {
         strokes = loadedStrokes
+        problems.restore(outline: outline)
         activeStroke = nil
         undoStack.removeAll()
         redoStack.removeAll()
@@ -83,6 +154,13 @@ final class CanvasViewModel {
     func selectInkColor(_ color: SIMD4<Float>) {
         strokeColor = color
         if !activeTool.isDrawingTool { selectTool(lastDrawingTool) }
+    }
+
+    /// Any touch on the paper — finger or pencil — puts the problem wheel away.
+    /// It is chrome over the page, and a touch here means the user has gone back
+    /// to writing.
+    func noteCanvasTouch() {
+        problems.collapseWheel()
     }
 
     // MARK: - Canvas navigation
@@ -213,6 +291,13 @@ final class CanvasViewModel {
     func beginStroke(with point: StrokePoint) {
         // The nib is on the glass now, so there is nothing left to preview.
         pencilHoverLocation = nil
+        // Retagging re-files existing ink, so it takes the nib away from every
+        // tool rather than being a fourth one — the pen the user was drawing
+        // with is still there when they switch the mode back off.
+        if problems.isRetagging {
+            beginRetag(at: point.position)
+            return
+        }
         switch activeTool {
         case .pen: beginInkStroke(with: point)
         case .eraser: beginErase(at: point.position)
@@ -221,6 +306,10 @@ final class CanvasViewModel {
     }
 
     func continueStroke(with point: StrokePoint) {
+        if problems.isRetagging {
+            retagStrokes(at: point.position)
+            return
+        }
         switch activeTool {
         case .pen: activeStroke?.appendPoint(point)
         case .eraser: continueErase(to: point.position)
@@ -229,6 +318,10 @@ final class CanvasViewModel {
     }
 
     func endStroke() {
+        if problems.isRetagging {
+            endRetag()
+            return
+        }
         switch activeTool {
         case .pen: commitInkStroke()
         case .eraser: endErase()
@@ -261,7 +354,13 @@ final class CanvasViewModel {
 
     private func beginInkStroke(with point: StrokePoint) {
         clearSelection()
-        var stroke = Stroke(sessionID: sessionID, style: currentStyle())
+        // Tagged as it is drawn: the picker's selection is what "the problem I
+        // am working on" means, so nothing has to be tagged after the fact.
+        var stroke = Stroke(
+            sessionID: sessionID,
+            style: currentStyle(),
+            problemNodeID: problems.selectedNodeID
+        )
         stroke.appendPoint(point)
         activeStroke = stroke
     }

@@ -45,6 +45,7 @@ targets:
       - Document
       - Export
       - Overlay
+      - ProblemPicker
       - ToolDock
       - Stroke
       - Toolbar

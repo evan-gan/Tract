@@ -110,6 +110,9 @@ final class CanvasUIView: UIView {
     // MARK: - Pencil touch handling
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // Before the pencil filter: a finger landing on the paper is just as
+        // much a sign that the chrome should get out of the way.
+        MainActor.assumeIsolated { viewModel?.noteCanvasTouch() }
         guard let touch = touches.first, touch.type == .pencil else { return }
         addStrokePoint(from: touch, phase: .began)
     }

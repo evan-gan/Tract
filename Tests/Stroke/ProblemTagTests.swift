@@ -91,11 +91,11 @@ struct ProblemTagCodingTests {
     @Test("A stroke saved before tagging existed still loads, untagged")
     func strokeWithoutTagKeyDecodes() throws {
         var untagged = StrokeFixtures.square(at: .zero)
-        untagged.problemTag = nil
+        untagged.problemNodeID = nil
 
         let encoded = try PropertyListEncoder().encode(untagged)
         let decoded = try PropertyListDecoder().decode(Stroke.self, from: encoded)
 
-        #expect(decoded.problemTag == nil)
+        #expect(decoded.problemNodeID == nil)
     }
 }

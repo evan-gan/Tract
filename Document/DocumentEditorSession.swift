@@ -81,6 +81,7 @@ final class DocumentEditorSession: Identifiable {
             metadata = document.metadata
             viewModel.restore(
                 strokes: document.strokes,
+                outline: document.problemOutline,
                 origin: document.metadata.canvasOrigin,
                 scale: document.metadata.canvasScale
             )
@@ -119,13 +120,20 @@ final class DocumentEditorSession: Identifiable {
         // frame of a pinch — so they ride along with whatever save happens next,
         // including the flush that always runs on close.
         let transform = viewModel.canvasTransform
-        let viewChanged = metadata.canvasOrigin != transform.translation || metadata.canvasScale != transform.scale
+        // The picker's last-visited memory changes the stored outline without
+        // being an edit to the drawing, so it rides along here with pan and zoom
+        // rather than stamping a new modifiedAt on the document.
+        let outline = viewModel.problems.outline
+        let viewChanged = metadata.canvasOrigin != transform.translation
+            || metadata.canvasScale != transform.scale
+            || metadata.problemOutline != outline
         let revisionBeingSaved = viewModel.revision
         let contentChanged = hasUnsavedChanges || revisionBeingSaved != savedRevision
         guard contentChanged || viewChanged else { return }
 
         metadata.canvasOrigin = transform.translation
         metadata.canvasScale = transform.scale
+        metadata.problemOutline = outline
         // Merely looking at a document — panning, zooming — must not push it to the
         // front of the library as if it had been edited.
         if contentChanged { metadata.modifiedAt = .now }

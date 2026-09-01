@@ -12,6 +12,9 @@ struct CanvasRenderer: View {
     /// commits as a single undo step when it ends.
     var selectedStrokeIDs: Set<UUID> = []
     var selectionOffset: CGPoint = .zero
+    /// Recolouring and dimming asked for by the problem picker's modes. Handed
+    /// in already resolved, so the draw loop stays a lookup per stroke.
+    var problemInk: ProblemInkStyling = .inactive
 
     var body: some View {
         Canvas { context, _ in
@@ -35,7 +38,7 @@ struct CanvasRenderer: View {
         let path = buildPath(for: stroke, offsetBy: dragOffset)
         context.stroke(
             path,
-            with: .color(stroke.style.swiftUIColor),
+            with: .color(problemInk.color(for: stroke).opacity(problemInk.opacity(for: stroke))),
             style: SwiftUI.StrokeStyle(
                 lineWidth: transform.toScreen(length: stroke.style.lineWidth),
                 lineCap: .round,

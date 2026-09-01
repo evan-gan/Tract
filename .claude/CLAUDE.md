@@ -5,6 +5,15 @@ description: Apply project coding standards when writing, reviewing, or modifyin
 
 Any commands with rm should be their own command so that they can be easily reviewed & not bundled with other commands.
 
+**Edit files with the Edit/Write tools, not through the shell.** No `python3 - <<PY`
+rewrites, no `cat > file <<'EOF'`, no `sed -i` — shell runs are slow here and the
+file tools are immediate.
+
+**Never run xcodebuild one invocation at a time.** Bundle the build, every test
+target (`-only-testing:` repeats) and any screenshot runs into a single command:
+each run costs minutes, and that time is better spent hand-testing the previous
+build on the iPad in parallel.
+
 # Tract — Build & Tooling
 
 Tract is an iPad-only SwiftUI drawing app (iOS 26, Swift 6.2). **Xcode never needs to
@@ -24,7 +33,7 @@ be opened.** Everything below runs headless from the shell.
 ./scripts/test.sh ["iPad Pro 11-inch (M5)"]
 
 # Screenshot a screen on a simulator — light, dark, or both
-./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportmenu]
+./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportmenu|problempicker]
 ```
 
 `scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
@@ -37,9 +46,10 @@ simulator, sets its light/dark appearance, runs the capture test in
 `UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
 into `build/screenshots/<screen>-<appearance>.png` — read that file to see the change.
 
-Three screens are wired up: `canvas` (the default), `library` (the document grid),
-and `exportmenu` (the Export control expanded, which the canvas shot cannot show
-because the button is collapsed there).
+Four screens are wired up: `canvas` (the default), `library` (the document grid),
+`exportmenu` (the Export control expanded, which the canvas shot cannot show
+because the button is collapsed there), and `problempicker` (the problem wheel
+with a tree in it — a fresh canvas shows only dashes).
 
 Do not hand-roll this. It exists because the pieces are non-obvious:
 
@@ -59,6 +69,42 @@ The library shot needs documents that already have ink in them, and XCUITest can
 draw — the canvas takes Apple Pencil touches only, and a simulated finger drag pans.
 So `testCaptureLibrary` launches with `-TractSeedSampleDocuments`, which makes
 `SampleLibrarySeeder` (DEBUG-only) replace the library with fixed sample drawings.
+
+`testCaptureProblemPicker` instead opens the wheel and taps its own rows to build
+a tree. The wheel is shut until it is tapped, so every UI test starts by tapping
+`problemPickerValue` (the tag) or `problemPickerCollapsed` (the chevron, which
+also shuts it). From there, each row carries a
+`problemWheelOption-<level>-<value>` identifier and each column a
+`problemWheel<level>` one whose *value* is the value it is parked on.
+
+## The top bar is one surface
+
+Back, title, saving dot, problem tag and Export share a single glass pill
+(`TopBarView`). Anything added up there belongs *inside* that pill, not beside it
+— and not on its own `glassEffect`, because glass cannot sample glass. The
+problem wheel is the pattern to copy for something that expands: the bar's whole
+outline, tongue and all, is one path (`TopBarSurfaceShape`), and the wheel is laid
+out inside the bar's own layout at full height. Two things not to redo — letting
+the glass container blend a second surface onto the bar (it bites a piece out of
+the bar where they meet), and hanging the expansion in an overlay (SwiftUI does
+not hit-test what falls outside a view's bounds, so its rows stop responding).
+
+## Touches on the top chrome
+
+The problem wheel's columns are `ScrollView`s, and that is deliberate: a scroll
+view is UIKit's own touch handling, so finger and Apple Pencil both drive it with
+the same physics and nothing has to decide what a touch on the glass means. The
+segmented control it replaced did have to decide — SwiftUI delivered taps on that
+pill to the *wrong segment*, and a drag attached to a segment swallowed that
+segment's taps outright — which is why it ended up hand-rolled over UIKit
+recognisers. Prefer a real control over a hand-rolled gesture up here, and pin it
+down with a UI test (`ProblemPickerUITests`) rather than assuming it works.
+
+The wheel's feel is tuned in `ProblemWheelScrollBehavior`, and every knob in it
+fixed a real bug — momentum creating problems nobody picked, a bound scroll
+position swallowing the first drag, content offsets measured in a different space
+from scroll targets. `project_context.md` has the details; change it with the UI
+tests in front of you.
 
 ## Project generation
 

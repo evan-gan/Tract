@@ -58,8 +58,9 @@ Tract/
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
 │   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–500%, screen↔canvas conversion
 │
-├── Toolbar/                      # Fixed top chrome (close, title, save dot, export)
-│   ├── TopBarView.swift          # Assembles the top pill + Export menu
+├── Toolbar/                      # Fixed top chrome (close, title, save dot, problem wheel, export)
+│   ├── TopBarView.swift          # The one top pill: back, title, save dot, problem tag, Export
+│   ├── TopBarSurfaceShape.swift  # That pill's outline, tongue and all, as one path
 │   ├── DocumentTitleView.swift   # Editable title pill
 │   └── SaveIndicatorView.swift   # Quiet dot showing there is unsaved work
 │                                 # (the Export control itself is Export/ExportMenu.swift)
@@ -95,12 +96,29 @@ Tract/
 │   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths, pencil hover
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
+│   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
 │   ├── Export/                   # Paper/grid geometry, ink fitting, problem grouping, PDF output
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
 │   ├── ToolDockDragUITests.swift # The dock's drag/snap gesture
 │   ├── CanvasZoomUITests.swift   # Pinch limits, read back off the zoom pill
+│   ├── ProblemPickerUITests.swift # Wheel rows tapped, the dash, flicking a column
 │   └── CanvasSnapshotUITests.swift # Screenshot capture driven by scripts/screenshot.sh
+│
+├── ProblemPicker/                # Tagging control in the top chrome (the wheel)
+│   ├── ProblemTaggingModel.swift # @Observable: the tree, the selection, the two modes
+│   ├── ProblemWheelSegment.swift # The tag on the bar: the value, or the drums that replace it
+│   ├── ProblemWheelColumn.swift  # One drum: a snapping ScrollView of values
+│   ├── ProblemWheelScrollBehavior.swift # Momentum-free snapping + the landing report
+│   ├── ProblemWheelOption.swift  # One row of a column: dash, existing node, or uncreated
+│   ├── ProblemDeleteConfirmationView.swift # The held-row popover: "Delete 1.b"
+│   ├── ProblemOutlineView.swift  # PARKED (not presented): the tree popover and its drag
+│   ├── ProblemOutlineRowView.swift # PARKED: one row — connectors, label, child count
+│   ├── ProblemTreeConnectors.swift # PARKED: the file-tree lines, as a Shape
+│   ├── ProblemOutlineDrag.swift  # PARKED: a row being carried and what it resolves to
+│   ├── ProblemInkStyling.swift   # Per-stroke tint/dim the canvas paints under the modes
+│   ├── ProblemTintPalette.swift  # Evenly spaced hues, one per problem number
+│   └── ProblemPickerMetrics.swift # Every size and threshold the control is built from
 │
 ├── Stroke/                       # Pure data types — no UIKit/SwiftUI imports
 │   ├── StrokePoint.swift         # Single pencil sample (position, force, azimuth, altitude, roll)
@@ -111,6 +129,11 @@ Tract/
 │   ├── ProblemTag.swift          # Ordered levels ([1, a, ii]); Comparable parent→child
 │   ├── ProblemLabelStyle.swift   # Notations (number/letter/roman) as values + NumeralNotation
 │   ├── ProblemTagFormatter.swift # Tag → printed text, with a swappable style table
+│   ├── ProblemNode.swift         # An identified, *unlabelled* node; ProblemPath
+│   ├── ProblemOutline.swift      # The document's tree: reads, edits, last-used memory
+│   ├── ProblemOutlineRow.swift   # Flattening the tree into drawable rows + connector flags
+│   ├── ProblemLevelNotation.swift # Level → notation (1, a, I) and the three-level cap
+│   ├── ProblemDropResolver.swift # Pure drop maths: gap, level, parent, insertion index
 │   └── InkColor.swift            # Named ink colours + the dock's quick palette (default ink: black)
 │
 ├── Document/                     # Document model + persistence
@@ -126,7 +149,7 @@ Tract/
 │
 ├── Export/
 │   ├── ExportAdapter.swift       # Protocol all exporters conform to
-│   ├── ExportMenu.swift          # Export button that expands in place into formats → share sheet
+│   ├── ExportMenu.swift          # Filled capsule on the bar; expands in place into formats → share sheet
 │   ├── ExportFileNaming.swift    # Document title → safe file name
 │   ├── StrokeRasterizer.swift    # Shared strokes → CGContext drawing (PNG, PDF, thumbnails)
 │   ├── InkFitTransform.swift     # Shared "scale ink to fit this box and centre it" maths
@@ -155,6 +178,11 @@ Tract/
 `ToolType` (in `Stroke/StrokeStyle.swift`) has exactly three cases, and
 `CanvasViewModel.beginStroke/continueStroke/endStroke` dispatch on the active one.
 A pencil gesture always goes through those three calls, whatever the tool.
+
+Retagging is the one thing that is *not* a fourth tool: while
+`problems.isRetagging` is on, those same three calls re-file the ink under the
+nib instead of dispatching, so the pen the user was drawing with is still in hand
+when the mode goes off again.
 
 **Pen** — the only tool that produces a `Stroke`. One undo step per gesture.
 
@@ -282,6 +310,195 @@ menu again; a tap off it drops the selection, as it always did.
   `CanvasContainerView.selectionActions` is the list; adding an entry there is the
   whole change.
 
+
+---
+
+## Tagging strokes with a problem
+
+Work on an infinite canvas is exported as a sheet of problems, so every stroke
+needs to know which problem it belongs to. The picker is how that happens while
+someone is writing, without breaking their flow.
+
+### Labels come from position, never from storage
+
+`ProblemOutline` is a three-level tree of `ProblemNode`s, and a node stores *no
+label*. Its label is its index among its siblings, rendered through the notation
+for its level (`ProblemLevelNotation`: 1, then a, then I). Reordering is a single
+splice: it renames the moved node and everything after it without touching a
+stored value anywhere.
+
+**A stroke therefore points at a node id (`Stroke.problemNodeID`), not at a tag.**
+A stroke that stored "1b" would be renamed out from under itself the moment
+anything above it moved. `ProblemGrouping.groups(from:outline:…)` resolves ids
+back into printable `ProblemTag`s at export time, and an id whose node has been
+deleted simply reads as untagged.
+
+A tag is valid at any depth: a stroke on `2` stays on `2` after `2a` and `2b`
+appear beneath it. The depth cap is three levels — a node `depth(node)` tall may
+sit at level L only while `L + depth(node) <= 3`.
+
+The tree lives in `DocumentMetadata.problemOutline` (schema version 2), next to
+the card rather than beside the strokes: it is a few hundred bytes, and it loads
+without decoding a page of pencil telemetry. It is `Optional` so documents
+written before tagging existed still decode.
+
+### The bar it lives on
+
+Back, title, the saving dot, the problem tag and Export are **one glass pill**
+(`TopBarView`). Export is a filled capsule rather than its own glass surface,
+because glass cannot sample glass — stacked, the two read as a smear instead of a
+button.
+
+Every control is centred on a row exactly one wheel row tall, which is what lets
+the top of the wheel sit on the bar itself. Opening it widens the tag's segment —
+pushing the title and Export aside — and hangs only the **two remaining rows**
+out of the bar's underside. The row already on the bar is doing the work a third
+row of glass would otherwise have to.
+
+That tongue is part of the bar's own outline (`TopBarSurfaceShape`), not a second
+surface beside it. Two glass surfaces set against each other get blended by the
+glass container, and that blend bites a piece out of the bar where they meet —
+a shape belonging to neither. One path is one surface, so the join is exactly the
+fillet asked for. The tongue's depth comes from the view's own height, so it
+grows with the expansion without the shape animating anything itself, and its
+horizontal span is measured from the segment (`segmentFrame`) because the segment
+moves whenever the title changes width.
+
+The drums are laid out at their full height *inside* the bar's own layout —
+SwiftUI does not hit-test what hangs outside a view's bounds, so anything drawn
+past the frame simply stops taking taps.
+
+`TopBarView` reports the height of **the bar alone** (`onBarHeightChange`), not of
+the whole control: a dock parked at the top settles under the bar and must not
+slide down the screen every time the wheel opens.
+
+### The wheel
+
+Shut, it is one value on the bar reading the address new ink is filed under —
+"1.b", or a dash while nothing is picked. Open, three drums take its place: the
+value *before* the selection lands on the bar's own row, the selection sits in
+the middle with a small caret either side of it, and the value after it is
+below — so both neighbours are readable, and the control still only opens two
+rows deep. The carets do the job a filled selection band would, without drawing
+attention to the seam the drums cross. The chevron beside them is pinned to the
+bar's row either way, so there is always somewhere to press to put the wheel
+back.
+
+Tapping the value opens it, and so does the chevron; the chevron also shuts it,
+and it folds away when the user goes back to the page — `CanvasUIView.touchesBegan`
+calls `noteCanvasTouch()` on the first touch of any kind. The value is the target
+a hand actually goes for, which is why it is not left inert with the chevron
+carrying the whole job.
+
+Each column offers a dash, every sibling that exists at that level, and **one
+uncreated row past the end** (drawn faintly). Rows can be tapped as well as
+scrolled to, and held.
+
+- **Landing on the uncreated row creates that node**, which is the only way the
+  wheel adds to the tree — one gesture covers navigation and creation, so there
+  is no separate add button.
+- **The dash unsets that level and everything under it.** On the first column
+  that means new ink is untagged; on the others it is the way back to tagging a
+  whole problem once its parts exist. It only navigates — nothing is deleted.
+- A column whose parent is unset offers only the dash.
+- **Picking a level returns to what was last used under it, and lands on the dash
+  where nothing has been.** Coming back to problem 1 lands on the part being
+  written; a problem opened for the first time files ink under the problem
+  itself, because walking into a first part on its own would tag "1a" for
+  someone who asked for "1". The memory (`ProblemOutline.rememberChoice`) holds
+  the child's *id*, so it still points at the same work after a reorder, and it
+  remembers **the dash as firmly as a part** — unsetting the letter to tag a
+  whole problem is a choice, and coming back must not undo it. It rides along
+  with the next real save rather than forcing one, the way pan and zoom do.
+- **Holding a row for 0.7 s offers to delete it**, in a popover pointing at that
+  row and named after what it removes ("Delete 1.b"). The subtree goes with it;
+  ink filed under any of it reads as untagged rather than as an error. The hold
+  is `simultaneousGesture` and cancelled by movement — a long press that competes
+  for the touch eats the column's first drag.
+
+### How the drum turns
+
+`ProblemWheelScrollBehavior` takes deceleration out and leaves dragging alone:
+the column stops on the row **where the hand let go**, so a long pull moves as
+many values as it covers and a flick cannot run through values nobody looked at
+— which matters because the last row of a column *creates* a problem.
+
+Three things about it are not obvious, and each was a bug first:
+
+- **The landing is reported by the behaviour, not read off `scrollPosition`.** A
+  bound scroll position also fights a short drag — it pins the column back to the
+  row it already holds — which showed as a wheel needing two swipes to move one
+  value. Programmatic moves go through `ScrollViewReader.scrollTo` instead.
+- **Offsets from `onScrollGeometryChange` need the top content inset added** to
+  land in the same space as the scroll target. That margin is half a column tall,
+  so mixing the two spaces put every drag a row and a half wide of the truth.
+- **A drag counts as reaching the next row at 0.35 of one**, not half: a scroll
+  view holds the content still for the first few points of a pan, so the drum
+  lags the finger by that much for the whole gesture.
+
+Landings are only committed while a hand is driving the column
+(`ProblemWheelColumn.dragStartOffset`). Targets are resolved during plain layout
+and during the column's own animations too, and committing those had a column
+mid-animation re-selecting whatever row it was passing.
+
+Everything else the old segmented pill carried — the outline, retag, tint by
+problem — is **parked**: the model still holds it and the views still compile,
+but nothing in the chrome presents them. They are meant to come back, and
+`ProblemOutlineView` is where the outline is waiting.
+
+### The outline
+
+Parked — not reachable from the chrome today. A popover of the whole tree,
+drawn with file-tree connectors
+(`ProblemTreeConnectors`) over a uniform row height, which is what lets
+neighbouring rows' lines meet without anything being measured. Rows are the only
+tappable thing in it — there are no add or delete affordances, because
+**reordering is the editor**.
+
+Dragging a row carries its whole subtree (dimmed in place) and a blue insertion
+line marks the drop. The rules live in `ProblemDropResolver`, which works on the
+visible rows *with the dragged subtree removed* — one decision that stops a node
+being dropped inside itself, makes the insertion index directly usable after the
+node is lifted out (so the "moved down its own list" off-by-one never arises),
+and keeps the marker pointing at rows that will still be there.
+
+A drag keeps its original level until a row at a different level is hovered for
+two seconds, so vertical movement alone never reparents anything. Target levels
+are clamped to `3 - depth(node)`, and a level with no parent at that position
+steps up until one resolves — level 0 always resolves, so the marker never points
+at nothing.
+
+### Recovery
+
+Two modes make a wrong tag cheap, both driven by `ProblemInkStyling` and applied
+by `CanvasRenderer`. They are live in `ProblemTaggingModel` but, like the
+outline, have no control in the chrome at the moment:
+
+- **Retag** — the nib re-files whatever ink it touches under the current tag
+  (a sweep is one undo step, and only if it changed something), with everything
+  belonging to other problems dimmed.
+- **Tint by problem** — colours ink by problem *number*, so parts of one problem
+  share a colour and tag boundaries are visible without reading the wheel.
+
+### Touch handling
+
+The wheel's columns are `ScrollView`s, which is the whole point: a scroll view is
+UIKit's own touch handling, so a finger and an Apple Pencil drive it with the
+same physics for free. The control it replaced had to decide, itself, what every
+touch on the top chrome meant — and repeatedly got it wrong. SwiftUI delivered
+taps on that glass pill to the wrong segment, and a drag attached to a segment
+swallowed that segment's taps entirely, so the whole thing ended up hand-rolled
+in UIKit (`ProblemSegmentTouchLayer`, now gone).
+
+In the outline, where the surface is an ordinary popover, SwiftUI is fine, but
+the drag has to be `.simultaneousGesture` on the list rather than a gesture on
+the rows: `.highPriorityGesture` there kills row taps, and a plain `.gesture`
+loses the drag.
+
+`ProblemPickerUITests` drives the wheel from outside — rows tapped, a column
+flicked — because none of this is visible to a unit test. Anything added to the
+top chrome should be checked the same way rather than assumed to work.
+
 ---
 
 ## The tool dock
@@ -384,6 +601,8 @@ Rules that keep saving trustworthy — break any of these and data goes missing:
 
 When to bump `DocumentMetadata.currentSchemaVersion`: any change to what
 `metadata.json` or `strokes.plist` contain that an older build would misread.
+Version 2 added `problemOutline` — an older build would read the file, ignore the
+tree, and write the document back with every problem tag destroyed.
 
 ### What triggers a save
 

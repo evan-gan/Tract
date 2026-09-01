@@ -5,7 +5,8 @@ import UIKit
 /// Two layouts, chosen through `PDFExportOptions`:
 ///
 /// - `.wholeDrawing` — the drawing scaled to fit one page inside its margins.
-/// - `.problemTable` — strokes grouped by `Stroke.problemTag`, one labelled cell
+/// - `.problemTable` — strokes grouped by the problem each one is tagged with,
+///   resolved through the document's `ProblemOutline`, one labelled cell
 ///   per problem, flowing onto extra pages as needed. This is what turns work
 ///   scattered across an infinite canvas into a sheet a teacher can read.
 struct PDFExporter: ExportAdapter {
@@ -29,6 +30,7 @@ struct PDFExporter: ExportAdapter {
         case .problemTable(let tableLayout):
             let groups = ProblemGrouping.groups(
                 from: strokes,
+                outline: document.problemOutline,
                 depth: tableLayout.groupingDepth,
                 untaggedLabel: tableLayout.untaggedLabel,
                 formatter: tableLayout.tagFormatter

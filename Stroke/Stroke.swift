@@ -15,16 +15,21 @@ struct Stroke: Identifiable, Codable, Sendable {
     /// Bounding box in canvas space, updated incrementally as points arrive.
     /// Used for spatial indexing and export viewport clipping.
     var canvasBounds: CGRect
-    /// Which problem this stroke is part of, addressed outermost level first —
-    /// `[1, a, ii]` for problem 1, part a, sub-part ii. Nil until the user tags it.
-    /// `ProblemGrouping` gathers strokes by this tag so an export can lay each
-    /// problem out in its own labelled cell.
+    /// Which problem this stroke belongs to, as the *identity* of a node in the
+    /// document's `ProblemOutline` — never as the label "1b".
+    ///
+    /// Labels come from position, so a stroke that stored one would be renamed
+    /// out from under itself the moment anything above it moved. Pointing at the
+    /// node instead means a reorder relabels the work without touching a single
+    /// stroke. `ProblemGrouping` resolves these ids back into printable tags at
+    /// export time. Nil until the user tags it, and an id whose node has since
+    /// been deleted reads as untagged.
     ///
     /// Optional on purpose: the synthesised decoder reads it with
     /// `decodeIfPresent`, so documents saved before tagging existed still load.
-    var problemTag: ProblemTag?
+    var problemNodeID: UUID?
 
-    init(id: UUID = UUID(), sessionID: UUID, style: StrokeStyle, problemTag: ProblemTag? = nil) {
+    init(id: UUID = UUID(), sessionID: UUID, style: StrokeStyle, problemNodeID: UUID? = nil) {
         self.id = id
         self.sessionID = sessionID
         self.startTime = .now
@@ -33,7 +38,7 @@ struct Stroke: Identifiable, Codable, Sendable {
         self.style = style
         self.isComplete = false
         self.canvasBounds = .null
-        self.problemTag = problemTag
+        self.problemNodeID = problemNodeID
     }
 
     /// Appends a point and expands the bounding box to include it.

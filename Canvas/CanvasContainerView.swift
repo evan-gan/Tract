@@ -27,7 +27,8 @@ struct CanvasContainerView: View {
                 activeStroke: viewModel.activeStroke,
                 transform: viewModel.canvasTransform,
                 selectedStrokeIDs: viewModel.selectedStrokeIDs,
-                selectionOffset: viewModel.selectionDragOffset
+                selectionOffset: viewModel.selectionDragOffset,
+                problemInk: viewModel.problemInkStyling
             )
             .ignoresSafeArea()
             CanvasView(viewModel: viewModel)
@@ -139,13 +140,17 @@ struct CanvasContainerView: View {
     /// Title bar centred, zoom pill pinned trailing. Keeping both in one fixed
     /// row leaves every other edge free for the movable dock.
     private var topChromeRow: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             TopBarView(
                 title: Binding(get: { session.title }, set: { session.title = $0 }),
                 isSaving: session.hasUnsavedChanges,
                 glassNamespace: glassNamespace,
                 onClose: closeDocument,
-                makeDocument: currentDocument
+                makeDocument: currentDocument,
+                problems: viewModel.problems,
+                // The bar only: the problem wheel hangs out of its underside
+                // when open, and the dock must not slide down the screen with it.
+                onBarHeightChange: { topChromeHeight = $0 + Self.topChromeInset }
             )
 
             HStack {
@@ -158,9 +163,12 @@ struct CanvasContainerView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topChromeHeight = $0 }
+        .padding(.top, Self.topChromeInset)
     }
+
+    /// Space above the top chrome, and the part of `topChromeHeight` the bar
+    /// itself cannot report.
+    private static let topChromeInset: CGFloat = 12
 
     /// A document whose strokes could not be decoded is shown read-only rather
     /// than as a blank canvas — a blank canvas invites the user to draw on it and
@@ -196,6 +204,9 @@ struct CanvasContainerView: View {
         var metadata = session.metadata
         metadata.canvasOrigin = viewModel.canvasTransform.translation
         metadata.canvasScale = viewModel.canvasTransform.scale
+        // The exporter groups by the tree, so a PDF must be laid out from the
+        // outline as it stands now, not as it was at the last save.
+        metadata.problemOutline = viewModel.problems.outline
         return SplineDocument(metadata: metadata, strokes: viewModel.strokes)
     }
 }

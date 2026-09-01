@@ -1,5 +1,6 @@
 import Testing
 import CoreGraphics
+import Foundation
 @testable import Tract
 
 @Suite("PDF export")
@@ -87,10 +88,12 @@ struct PDFExporterTests {
         var options = PDFExportOptions()
         options.layout = .problemTable(layout)
 
+        var builder = ProblemOutlineBuilder()
         let strokes = (1 ... 4).map { index in
-            square(at: CGPoint(x: index * 500, y: 0), tag: [.number(index)])
+            square(at: CGPoint(x: index * 500, y: 0), node: builder.node([index]))
         }
-        let data = try PDFExporter(options: options).export(document: document(with: strokes), viewport: nil)
+        let data = try PDFExporter(options: options)
+            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
 
         #expect(try PDFPageInspector.document(from: data).pageCount == 4)
     }
@@ -100,10 +103,12 @@ struct PDFExporterTests {
         var options = PDFExportOptions()
         options.layout = .problemTable(ProblemTableLayout(columns: 2, rows: 3, untaggedLabel: nil))
 
+        var builder = ProblemOutlineBuilder()
         let strokes = (1 ... 6).map { index in
-            square(at: CGPoint(x: index * 500, y: 0), tag: [.number(index)])
+            square(at: CGPoint(x: index * 500, y: 0), node: builder.node([index]))
         }
-        let data = try PDFExporter(options: options).export(document: document(with: strokes), viewport: nil)
+        let data = try PDFExporter(options: options)
+            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
 
         #expect(try PDFPageInspector.document(from: data).pageCount == 1)
     }
@@ -113,15 +118,17 @@ struct PDFExporterTests {
         var options = PDFExportOptions()
         options.layout = .problemTable(ProblemTableLayout(untaggedLabel: nil))
 
+        var builder = ProblemOutlineBuilder()
         let strokes = [
-            square(at: .zero, tag: [.number(1), .lowercaseLetter(1)]),
-            square(at: CGPoint(x: 900, y: 0), tag: [.number(1), .lowercaseRoman(4)])
+            square(at: .zero, node: builder.node([1, 1])),
+            square(at: CGPoint(x: 900, y: 0), node: builder.node([1, 2, 4]))
         ]
-        let data = try PDFExporter(options: options).export(document: document(with: strokes), viewport: nil)
+        let data = try PDFExporter(options: options)
+            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
         let text = try #require(PDFPageInspector.page(0, of: data).string)
 
         #expect(text.contains("1.a"))
-        #expect(text.contains("1.iv"))
+        #expect(text.contains("1.b.IV"))
     }
 
     @Test("Ink from problems drawn far apart is gathered onto one page")
@@ -131,11 +138,13 @@ struct PDFExporterTests {
         options.maximumScale = 20
         options.layout = .problemTable(ProblemTableLayout(columns: 2, rows: 1, untaggedLabel: nil))
 
+        var builder = ProblemOutlineBuilder()
         let strokes = [
-            square(at: .zero, side: 60, tag: [.number(1)]),
-            square(at: CGPoint(x: 20_000, y: 12_000), side: 60, tag: [.number(2)])
+            square(at: .zero, side: 60, node: builder.node([1])),
+            square(at: CGPoint(x: 20_000, y: 12_000), side: 60, node: builder.node([2]))
         ]
-        let data = try PDFExporter(options: options).export(document: document(with: strokes), viewport: nil)
+        let data = try PDFExporter(options: options)
+            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
 
         let coverage = try PDFPageInspector.inkCoverage(of: PDFPageInspector.page(0, of: data))
 
@@ -151,10 +160,12 @@ struct PDFExporterTests {
         options.layout = .problemTable(layout)
 
         // Three parts of one problem: one cell at depth 1, so one page.
+        var builder = ProblemOutlineBuilder()
         let strokes = (1 ... 3).map { part in
-            square(at: CGPoint(x: part * 500, y: 0), tag: [.number(1), .lowercaseLetter(part)])
+            square(at: CGPoint(x: part * 500, y: 0), node: builder.node([1, part]))
         }
-        let data = try PDFExporter(options: options).export(document: document(with: strokes), viewport: nil)
+        let data = try PDFExporter(options: options)
+            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
 
         #expect(try PDFPageInspector.document(from: data).pageCount == 1)
         #expect(try #require(PDFPageInspector.page(0, of: data).string).contains("1"))
@@ -172,11 +183,14 @@ struct PDFExporterTests {
 
     // MARK: - Fixtures
 
-    private func document(with strokes: [Stroke]) -> SplineDocument {
-        SplineDocument(strokes: strokes)
+    private func document(
+        with strokes: [Stroke],
+        outline: ProblemOutline = ProblemOutline()
+    ) -> SplineDocument {
+        SplineDocument(metadata: DocumentMetadata(problemOutline: outline), strokes: strokes)
     }
 
-    private func square(at origin: CGPoint = .zero, side: CGFloat = 200, tag: ProblemTag? = nil) -> Stroke {
-        StrokeFixtures.square(at: origin, side: side, problemTag: tag)
+    private func square(at origin: CGPoint = .zero, side: CGFloat = 200, node: UUID? = nil) -> Stroke {
+        StrokeFixtures.square(at: origin, side: side, problemNodeID: node)
     }
 }

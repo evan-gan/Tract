@@ -9,12 +9,12 @@ enum StrokeFixtures {
         through positions: [CGPoint],
         tool: ToolType = .pen,
         lineWidth: CGFloat = 2,
-        problemTag: ProblemTag? = nil
+        problemNodeID: UUID? = nil
     ) -> Stroke {
         var stroke = Stroke(
             sessionID: UUID(),
             style: StrokeStyle(color: SIMD4(0, 0, 0, 1), lineWidth: lineWidth, opacity: 1, tool: tool),
-            problemTag: problemTag
+            problemNodeID: problemNodeID
         )
         for position in positions {
             stroke.appendPoint(point(at: position))
@@ -26,7 +26,7 @@ enum StrokeFixtures {
     /// A closed square of ink `side` points wide with its top-left at `origin`.
     /// Export tests use it because it covers area on the page, so a rasterised
     /// check can tell "drawn" from "drawn off the page".
-    static func square(at origin: CGPoint, side: CGFloat = 100, problemTag: ProblemTag? = nil) -> Stroke {
+    static func square(at origin: CGPoint, side: CGFloat = 100, problemNodeID: UUID? = nil) -> Stroke {
         stroke(
             through: [
                 origin,
@@ -36,7 +36,7 @@ enum StrokeFixtures {
                 origin
             ],
             lineWidth: 4,
-            problemTag: problemTag
+            problemNodeID: problemNodeID
         )
     }
 

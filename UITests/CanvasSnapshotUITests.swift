@@ -69,6 +69,51 @@ final class CanvasSnapshotUITests: XCTestCase {
         attachScreenshot(named: "exportmenu")
     }
 
+    /// Captures the problem picker with a tree in it — a cold canvas has only
+    /// dashes and a single uncreated row, which shows none of the drum.
+    func testCaptureProblemPicker() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let newDocument = app.buttons["New document"].firstMatch
+        XCTAssertTrue(newDocument.waitForExistence(timeout: 15),
+                      "The document list should offer a way to start a drawing.")
+        newDocument.tap()
+
+        // The document's own load resets the picker, so picking before it lands
+        // would have the tree wiped out from under the shot.
+        Thread.sleep(forTimeInterval: 2)
+        // The wheel is shut until the tag is tapped, and a shut wheel is not
+        // what this shot is of.
+        let tag = app.buttons["problemPickerValue"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 10),
+                      "The chrome should offer the problem tag.")
+        tag.tap()
+        Thread.sleep(forTimeInterval: 0.8)
+        buildSampleProblemTree(in: app)
+        // The columns are still settling between the carets right after the last
+        // pick.
+        Thread.sleep(forTimeInterval: 1.5)
+
+        attachScreenshot(named: "problempicker")
+    }
+
+    /// Builds 1, 1a, 1b, 1b.I by tapping the wheel's own rows.
+    private func buildSampleProblemTree(in app: XCUIApplication) {
+        func pickRow(_ value: String, inColumn level: Int) {
+            let row = app.buttons["problemWheelOption-\(level)-\(value)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 10),
+                          "Column \(level) should offer the row '\(value)'.")
+            row.tap()
+            Thread.sleep(forTimeInterval: 0.6)
+        }
+
+        pickRow("1", inColumn: 0)
+        pickRow("a", inColumn: 1)
+        pickRow("b", inColumn: 1)
+        pickRow("I", inColumn: 2)
+    }
+
     /// `.keepAlways` matters: without it the attachment is discarded for a
     /// passing test, and the script would find an empty result bundle.
     private func attachScreenshot(named name: String) {

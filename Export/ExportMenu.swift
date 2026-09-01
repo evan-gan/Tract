@@ -1,12 +1,16 @@
 import SwiftUI
 
-/// The Export control: a prominent glass button that expands *in place* into its
-/// format options, then shares the chosen file.
+/// The Export control: a prominent tinted button that expands *in place* into
+/// its format options, then shares the chosen file.
 ///
 /// Deliberately not a `Menu`. A menu floats a separate panel over the canvas,
 /// which is one more surface on a screen whose whole design is a few pieces of
 /// glass over paper. Here the button itself widens and its label gives way to the
 /// formats, so nothing new appears on top of the drawing.
+///
+/// It is a filled capsule rather than its own glass, because it now sits *on*
+/// the top bar's glass — and glass cannot sample glass, so a second surface
+/// stacked on the first reads as a smear rather than a button.
 ///
 /// It owns the whole flow — pick, write, share — rather than reporting a tap
 /// upwards, so the canvas does not have to carry share-sheet and error state it
@@ -40,7 +44,7 @@ struct ExportMenu: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .foregroundStyle(.white)
-        .glassEffect(glass, in: .capsule)
+        .background(Capsule().fill(Color.accentColor))
         // The surface itself grows; the labels inside cross-fade. Without the
         // transition the three formats pop in at full width before the glass has
         // finished widening, which reads as a flicker rather than an expansion.
@@ -88,15 +92,6 @@ struct ExportMenu: View {
         .contentShape(.capsule)
         .transition(.opacity)
         .accessibilityLabel("Export as \(adapter.displayName)")
-    }
-
-    /// Interactive only while collapsed. An interactive glass surface responds to
-    /// touches anywhere on itself, which is right for a single button and wrong
-    /// for one hosting three — expanded, it would light up for the whole pill no
-    /// matter which format the user was actually reaching for.
-    private var glass: Glass {
-        let tinted = Glass.regular.tint(.accentColor)
-        return isExpanded ? tinted : tinted.interactive()
     }
 
     /// The alert reads its message from `presenting:` rather than from state of

@@ -11,7 +11,17 @@ extension View {
     ///     surfaces that are themselves a single tappable control — an
     ///     interactive surface hosting several buttons reacts to the wrong touches.
     func glassChrome(cornerRadius: CGFloat = 20, isInteractive: Bool = false) -> some View {
-        modifier(GlassChrome(cornerRadius: cornerRadius, isInteractive: isInteractive))
+        glassChrome(
+            shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous),
+            isInteractive: isInteractive
+        )
+    }
+
+    /// The same material on a shape of the caller's own — for chrome that is not
+    /// a rounded rectangle, such as the top bar with the problem wheel hanging
+    /// out of its underside.
+    func glassChrome(shape: some Shape, isInteractive: Bool = false) -> some View {
+        modifier(GlassChrome(shape: shape, isInteractive: isInteractive))
     }
 }
 
@@ -28,17 +38,18 @@ extension View {
 /// gets its primary and secondary levels set here, and the views inside are expected
 /// to ask for `.primary` / `.secondary` *hierarchically* so they inherit them —
 /// never as `Color.primary` / `Color.secondary`, which resolve by scheme instead.
-private struct GlassChrome: ViewModifier {
+/// Deep enough to carry white labels over white paper, sheer enough that the
+/// surface still reads as glass rather than a solid slab. Light mode needs no
+/// counterpart: there the paper already matches the scheme, so untinted glass is
+/// both correct and the more honest material.
+private let darkChromeTint = Color(white: 0.09).opacity(0.82)
+
+private struct GlassChrome<Surface: Shape>: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
 
-    let cornerRadius: CGFloat
+    let shape: Surface
     let isInteractive: Bool
 
-    /// Deep enough to carry white labels over white paper, sheer enough that the
-    /// surface still reads as glass rather than a solid slab. Light mode needs no
-    /// counterpart: there the paper already matches the scheme, so untinted glass
-    /// is both correct and the more honest material.
-    private static let darkTint = Color(white: 0.09).opacity(0.82)
 
     func body(content: Content) -> some View {
         content
@@ -46,10 +57,10 @@ private struct GlassChrome: ViewModifier {
             // Does not fix the labels — that is what the literal styles above are
             // for — but system-drawn parts (dividers, the title's caret) do follow it.
             .environment(\.colorScheme, colorScheme)
-            .glassEffect(glass, in: .rect(cornerRadius: cornerRadius))
+            .glassEffect(glass, in: shape)
             // Glass only hit-tests its content, so taps near the padded edges are
             // otherwise swallowed by whatever sits underneath.
-            .contentShape(.rect(cornerRadius: cornerRadius))
+            .contentShape(shape)
     }
 
     private var primaryLabel: Color {
@@ -62,6 +73,6 @@ private struct GlassChrome: ViewModifier {
 
     private var glass: Glass {
         let base: Glass = isInteractive ? .regular.interactive() : .regular
-        return colorScheme == .dark ? base.tint(Self.darkTint) : base
+        return colorScheme == .dark ? base.tint(darkChromeTint) : base
     }
 }

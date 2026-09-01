@@ -8,7 +8,9 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     /// Bumped whenever the on-disk shape of a document changes. Reading a
     /// document written by a newer build fails loudly instead of silently
     /// dropping the fields this build does not understand.
-    static let currentSchemaVersion = 1
+    /// 2 added `problemOutline`: an older build would read the file, ignore the
+    /// tree, and write the document back with every problem tag destroyed.
+    static let currentSchemaVersion = 2
 
     var schemaVersion: Int
     let id: UUID
@@ -21,6 +23,13 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     /// Canvas pan/zoom, restored when the document is reopened.
     var canvasOrigin: CGPoint
     var canvasScale: CGFloat
+    /// The document's problem tree. Kept here rather than beside the strokes so
+    /// the picker's structure loads with the card and costs no stroke decoding,
+    /// and because it is a few hundred bytes next to a page of pencil telemetry.
+    ///
+    /// Optional on purpose: the synthesised decoder reads it with
+    /// `decodeIfPresent`, so documents written before tagging existed still load.
+    var problemOutline: ProblemOutline?
 
     init(
         id: UUID = UUID(),
@@ -29,7 +38,8 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
         modifiedAt: Date = .now,
         strokeCount: Int = 0,
         canvasOrigin: CGPoint = .zero,
-        canvasScale: CGFloat = 1.0
+        canvasScale: CGFloat = 1.0,
+        problemOutline: ProblemOutline? = nil
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.id = id
@@ -39,5 +49,6 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
         self.strokeCount = strokeCount
         self.canvasOrigin = canvasOrigin
         self.canvasScale = canvasScale
+        self.problemOutline = problemOutline
     }
 }

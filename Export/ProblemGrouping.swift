@@ -24,6 +24,9 @@ struct ProblemGroup: Identifiable, Sendable {
 enum ProblemGrouping {
     /// - Parameters:
     ///   - strokes: Any strokes; non-drawing tools and single-sample taps are dropped.
+    ///   - outline: The document's problem tree, which is what turns a stroke's
+    ///     stored node id into the address it prints under today. A stroke whose
+    ///     node is gone from the outline counts as untagged.
     ///   - depth: How many levels of the tag to group on. Nil keeps the full
     ///     address, so 1a and 1b are separate groups; 1 collapses every part of
     ///     problem 1 into a single group.
@@ -37,6 +40,7 @@ enum ProblemGrouping {
     ///   2, 10), with the untagged group, if any, last.
     static func groups(
         from strokes: [Stroke],
+        outline: ProblemOutline,
         depth: Int? = nil,
         untaggedLabel: String? = nil,
         formatter: ProblemTagFormatter = .standard
@@ -45,7 +49,7 @@ enum ProblemGrouping {
         var untaggedStrokes: [Stroke] = []
 
         for stroke in StrokeRasterizer.inkStrokes(strokes) {
-            if let tag = groupingTag(of: stroke, depth: depth) {
+            if let tag = groupingTag(of: stroke, in: outline, depth: depth) {
                 strokesByTag[tag, default: []].append(stroke)
             } else {
                 untaggedStrokes.append(stroke)
@@ -63,8 +67,14 @@ enum ProblemGrouping {
     /// The address a stroke is filed under, cut to `depth` levels. An empty tag
     /// carries no more information than no tag at all, so it counts as untagged
     /// rather than becoming a blank-headed cell.
-    private static func groupingTag(of stroke: Stroke, depth: Int?) -> ProblemTag? {
-        guard let tag = stroke.problemTag else { return nil }
+    private static func groupingTag(
+        of stroke: Stroke,
+        in outline: ProblemOutline,
+        depth: Int?
+    ) -> ProblemTag? {
+        guard let nodeID = stroke.problemNodeID, let tag = outline.tag(forNode: nodeID) else {
+            return nil
+        }
         let cut = depth.map { tag.prefix($0) } ?? tag
         return cut.isEmpty ? nil : cut
     }
