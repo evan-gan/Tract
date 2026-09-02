@@ -115,6 +115,21 @@ struct StrokeHitTests {
         #expect(StrokeGeometry.stroke(stroke, isEnclosedBy: square))
     }
 
+    /// The enclosure test rejects strokes by bounding box before it ray-casts a
+    /// single sample, and a perfectly straight mark has a flat one — which is the
+    /// case CoreGraphics' own containment call gets wrong.
+    @Test("A dead straight stroke inside the loop is still enclosed")
+    func flatStrokeIsEnclosed() {
+        let horizontal = StrokeFixtures.stroke(through: [
+            CGPoint(x: 20, y: 50), CGPoint(x: 80, y: 50),
+        ])
+        let vertical = StrokeFixtures.stroke(through: [
+            CGPoint(x: 50, y: 20), CGPoint(x: 50, y: 80),
+        ])
+        #expect(StrokeGeometry.stroke(horizontal, isEnclosedBy: square))
+        #expect(StrokeGeometry.stroke(vertical, isEnclosedBy: square))
+    }
+
     @Test("A stroke with even one point outside the loop is not enclosed")
     func partiallyEnclosedStroke() {
         let stroke = StrokeFixtures.stroke(through: [

@@ -1,5 +1,8 @@
 #if canImport(UIKit)
 import UIKit
+// For `UIColor(_: Color)` — the hover dot's ink comes from the view model as a
+// SwiftUI colour and is drawn by a CoreAnimation layer.
+import SwiftUI
 #else
 #error("This file requires UIKit and is designed for iOS/iPadOS only")
 #endif
@@ -28,6 +31,12 @@ final class CanvasUIView: UIView {
     // which is what drives the hover preview dot.
     private let hoverGesture = UIHoverGestureRecognizer()
 
+    // The preview dot. Moved from here rather than by SwiftUI so it keeps up with
+    // the nib — see `PencilHoverDot` — but hosted by `PencilHoverDotView`, one
+    // layer up, so the selection chrome cannot draw over it. The view model still
+    // owns the hover *state*.
+    private let hoverDot: PencilHoverDot
+
     // One finger moves an existing selection. It only begins when the touch
     // lands inside the selection (see gestureRecognizerShouldBegin), so a finger
     // anywhere else still belongs to pan and zoom.
@@ -52,8 +61,9 @@ final class CanvasUIView: UIView {
     private var fingerPanCanvasAnchor: CGPoint = .zero
     private var fingerPanAnchorValid = false
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(hoverDot: PencilHoverDot) {
+        self.hoverDot = hoverDot
+        super.init(frame: .zero)
         configureGestures()
         configurePencilInteraction()
         isMultipleTouchEnabled = true
@@ -110,31 +120,42 @@ final class CanvasUIView: UIView {
     // MARK: - Pencil touch handling
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        // Before the pencil filter: a finger landing on the paper is just as
-        // much a sign that the chrome should get out of the way.
-        MainActor.assumeIsolated { viewModel?.noteCanvasTouch() }
-        guard let touch = touches.first, touch.type == .pencil else { return }
-        addStrokePoint(from: touch, phase: .began)
+        guard let viewModel else { return }
+        MainActor.assumeIsolated {
+            // Before the pencil filter: a finger landing on the paper is just as
+            // much a sign that the chrome should get out of the way.
+            viewModel.noteCanvasTouch()
+            guard let touch = touches.first, touch.type == .pencil else { return }
+            // The nib is on the glass now, so there is nothing left to preview —
+            // the dot has to go at once, not on the next SwiftUI pass.
+            hoverDot.hide()
+            viewModel.beginStroke(with: makeStrokePoint(from: touch))
+        }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, touch.type == .pencil else { return }
+        guard let viewModel, let touch = touches.first, touch.type == .pencil else { return }
         // Consume coalesced touches to capture all 240 Hz Pencil Pro samples.
         let samples = event?.coalescedTouches(for: touch) ?? [touch]
-        for sample in samples {
-            addStrokePoint(from: sample, phase: .moved)
+        // Handed over as one batch, and without a `Task` hop: touch delivery is
+        // already on the main thread, and hopping per sample buys nothing but
+        // hundreds of scheduled continuations a second in front of the ink.
+        MainActor.assumeIsolated {
+            viewModel.continueStroke(with: samples.map { makeStrokePoint(from: $0) })
         }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, touch.type == .pencil else { return }
-        addStrokePoint(from: touch, phase: .ended)
-        Task { @MainActor in viewModel?.endStroke() }
+        guard let viewModel, let touch = touches.first, touch.type == .pencil else { return }
+        MainActor.assumeIsolated {
+            viewModel.continueStroke(with: makeStrokePoint(from: touch))
+            viewModel.endStroke()
+        }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard touches.first?.type == .pencil else { return }
-        Task { @MainActor in viewModel?.cancelStroke() }
+        guard let viewModel, touches.first?.type == .pencil else { return }
+        MainActor.assumeIsolated { viewModel.cancelStroke() }
     }
 
     // MARK: - Pencil hover
@@ -149,30 +170,40 @@ final class CanvasUIView: UIView {
         }
         // Hover callbacks already arrive on the main thread; going through a Task
         // would let the dot trail a frame or two behind the pencil.
-        MainActor.assumeIsolated { viewModel.updatePencilHover(to: hoverLocation) }
+        MainActor.assumeIsolated {
+            viewModel.updatePencilHover(to: hoverLocation)
+            moveHoverDot(to: hoverLocation, viewModel: viewModel)
+        }
+    }
+
+    /// Moves the preview dot itself, rather than leaving it to the next SwiftUI
+    /// update. Its size and colour still come from the view model — they change
+    /// on the tool, the weight and the zoom, and hover events stream in fast
+    /// enough that reading them per event costs nothing.
+    private func moveHoverDot(to location: CGPoint?, viewModel: CanvasViewModel) {
+        guard let location else {
+            hoverDot.hide()
+            return
+        }
+        hoverDot.show(
+            at: location,
+            diameter: viewModel.pencilPreviewDiameter,
+            color: UIColor(viewModel.pencilPreviewColor).resolvedColor(with: traitCollection)
+        )
     }
 
     override func touchesEstimatedPropertiesUpdated(_ touches: Set<UITouch>) {
-        for touch in touches {
-            guard let index = touch.estimationUpdateIndex?.intValue else { continue }
-            let point = makeStrokePoint(from: touch)
-            Task { @MainActor in viewModel?.updateEstimatedPoint(updateIndex: index, with: point) }
+        guard let viewModel else { return }
+        MainActor.assumeIsolated {
+            for touch in touches {
+                guard let index = touch.estimationUpdateIndex?.intValue else { continue }
+                viewModel.updateEstimatedPoint(updateIndex: index,
+                                               with: makeStrokePoint(from: touch))
+            }
         }
     }
 
     // MARK: - Point extraction
-
-    private func addStrokePoint(from touch: UITouch, phase: UITouch.Phase) {
-        guard let viewModel else { return }
-        let point = makeStrokePoint(from: touch)
-        Task { @MainActor in
-            if phase == .began {
-                viewModel.beginStroke(with: point)
-            } else {
-                viewModel.continueStroke(with: point)
-            }
-        }
-    }
 
     private func makeStrokePoint(from touch: UITouch) -> StrokePoint {
         let screenPoint = touch.preciseLocation(in: self)

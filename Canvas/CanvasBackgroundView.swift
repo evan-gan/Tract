@@ -21,7 +21,15 @@ struct CanvasBackgroundView: View {
         .transaction { $0.animation = nil }
     }
 
+    /// The whole grid goes down as **one** path and one fill. A fill per dot is
+    /// hundreds of draw calls on every frame of a pan — at the minimum spacing,
+    /// close to ten thousand — and that cost lands squarely on the gesture the
+    /// paper is supposed to follow.
     private func drawDotGrid(in context: inout GraphicsContext, size: CGSize) {
+        context.fill(dotGridPath(size: size), with: .color(Self.dotColor))
+    }
+
+    private func dotGridPath(size: CGSize) -> Path {
         let spacing = CanvasGrid.screenSpacing(atScale: transform.scale)
         let radius = CanvasGrid.dotRadius(atScale: transform.scale)
         let firstX = CanvasGrid.firstDotOffset(translation: transform.translation.x,
@@ -29,19 +37,17 @@ struct CanvasBackgroundView: View {
         let firstY = CanvasGrid.firstDotOffset(translation: transform.translation.y,
                                                spacing: spacing)
 
-        var x = firstX
-        while x < size.width {
-            var y = firstY
-            while y < size.height {
-                context.fill(dot(atX: x, y: y, radius: radius), with: .color(Self.dotColor))
-                y += spacing
+        return Path { path in
+            var x = firstX
+            while x < size.width {
+                var y = firstY
+                while y < size.height {
+                    path.addEllipse(in: CGRect(x: x - radius, y: y - radius,
+                                               width: radius * 2, height: radius * 2))
+                    y += spacing
+                }
+                x += spacing
             }
-            x += spacing
         }
-    }
-
-    private func dot(atX x: CGFloat, y: CGFloat, radius: CGFloat) -> Path {
-        Path(ellipseIn: CGRect(x: x - radius, y: y - radius,
-                               width: radius * 2, height: radius * 2))
     }
 }

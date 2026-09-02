@@ -67,10 +67,22 @@ final class CanvasViewModel {
     /// one undo step — and only if it actually re-filed something.
     private var strokesBeforeRetag: [Stroke]?
     private var retagGestureChangedInk = false
+    /// Where the sweep was last tested, so samples that have barely moved can be
+    /// dropped before they walk the whole page again.
+    private var lastRetagPoint: CGPoint?
 
     private func beginRetag(at canvasPoint: CGPoint) {
         strokesBeforeRetag = strokes
         retagGestureChangedInk = false
+        lastRetagPoint = canvasPoint
+        retagStrokes(at: canvasPoint)
+    }
+
+    private func continueRetag(at canvasPoint: CGPoint) {
+        if let lastPoint = lastRetagPoint, isTooCloseToKeep(canvasPoint, after: lastPoint) {
+            return
+        }
+        lastRetagPoint = canvasPoint
         retagStrokes(at: canvasPoint)
     }
 
@@ -78,6 +90,7 @@ final class CanvasViewModel {
         defer {
             strokesBeforeRetag = nil
             retagGestureChangedInk = false
+            lastRetagPoint = nil
         }
         guard retagGestureChangedInk, let before = strokesBeforeRetag else { return }
         undoStack.append(before)
@@ -305,16 +318,39 @@ final class CanvasViewModel {
         }
     }
 
+    /// Every sample UIKit coalesced into one touch event. Taken as a batch so a
+    /// 240 Hz burst is one call rather than one per sample.
+    func continueStroke(with points: [StrokePoint]) {
+        for point in points {
+            continueStroke(with: point)
+        }
+    }
+
     func continueStroke(with point: StrokePoint) {
         if problems.isRetagging {
-            retagStrokes(at: point.position)
+            continueRetag(at: point.position)
             return
         }
         switch activeTool {
-        case .pen: activeStroke?.appendPoint(point)
+        case .pen: appendInkSample(point)
         case .eraser: continueErase(to: point.position)
         case .lasso: continueLassoOrSelectionDrag(to: point.position)
         }
+    }
+
+    /// How far a sample has to land from the one before it, in *screen* points,
+    /// to be worth keeping.
+    ///
+    /// Apple Pencil reports 240 samples a second, so ordinary handwriting piles
+    /// up points a fraction of a pixel apart. Each one costs a path segment on
+    /// every frame, a hit test on every erase, and bytes on every save, and none
+    /// of them is visible. Measured on screen rather than on the canvas so ink
+    /// keeps its detail when the user zooms in to write small.
+    private static let minimumSampleScreenSpacing: CGFloat = 0.75
+
+    private func isTooCloseToKeep(_ canvasPoint: CGPoint, after previous: CGPoint) -> Bool {
+        canvasTransform.toScreen(length: previous.distance(to: canvasPoint))
+            < Self.minimumSampleScreenSpacing
     }
 
     func endStroke() {
@@ -365,6 +401,16 @@ final class CanvasViewModel {
         activeStroke = stroke
     }
 
+    /// Adds a sample to the stroke being drawn, unless it landed on top of the
+    /// last one — see `minimumSampleScreenSpacing`.
+    private func appendInkSample(_ point: StrokePoint) {
+        if let lastPosition = activeStroke?.points.last?.position,
+           isTooCloseToKeep(point.position, after: lastPosition) {
+            return
+        }
+        activeStroke?.appendPoint(point)
+    }
+
     private func commitInkStroke() {
         guard var stroke = activeStroke else { return }
         stroke.endTime = .now
@@ -390,6 +436,9 @@ final class CanvasViewModel {
 
     private func continueErase(to canvasPoint: CGPoint) {
         guard let previousPoint = lastErasePoint else { return }
+        // A sub-pixel move cannot reach ink the last sample missed, and the test
+        // it would trigger walks every stroke on the page.
+        guard !isTooCloseToKeep(canvasPoint, after: previousPoint) else { return }
         lastErasePoint = canvasPoint
         let tipRadius = canvasTransform.toCanvas(length: Self.eraserTipScreenRadius)
         strokes.removeAll {
@@ -426,8 +475,18 @@ final class CanvasViewModel {
         if isDraggingSelection {
             updateSelectionDrag(to: canvasPoint)
         } else {
-            lassoPath.append(canvasPoint)
+            appendLassoSample(canvasPoint)
         }
+    }
+
+    /// Samples that land on top of one another do not change the loop's shape,
+    /// but every one of them is another edge in the enclosure test the lasso runs
+    /// against each stroke when it closes.
+    private func appendLassoSample(_ canvasPoint: CGPoint) {
+        if let lastPoint = lassoPath.last, isTooCloseToKeep(canvasPoint, after: lastPoint) {
+            return
+        }
+        lassoPath.append(canvasPoint)
     }
 
     private func endLassoOrSelectionDrag() {

@@ -111,17 +111,20 @@ enum StrokeGeometry {
         ).insetBy(dx: -hitRadius, dy: -hitRadius)
         guard stroke.canvasBounds.intersects(eraserBounds) else { return false }
 
-        let positions = stroke.points.map(\.position)
-        guard let firstPosition = positions.first else { return false }
+        // Read straight off the samples rather than mapping out their positions:
+        // this runs against every stroke on the page for every erase sample, and
+        // a throwaway array per stroke is the bulk of its cost.
+        let points = stroke.points
+        guard let firstPosition = points.first?.position else { return false }
 
         // A single-point stroke is a dot: no segment, so it is measured against
         // itself as a zero-length one, which the distance test handles directly.
-        guard positions.count >= 2 else {
+        guard points.count >= 2 else {
             return distance(from: firstPosition, toSegment: eraserStart, eraserEnd) <= hitRadius
         }
 
-        for index in 1 ..< positions.count
-        where distance(fromSegment: positions[index - 1], positions[index],
+        for index in 1 ..< points.count
+        where distance(fromSegment: points[index - 1].position, points[index].position,
                        toSegment: eraserStart, eraserEnd) <= hitRadius {
             return true
         }
@@ -156,7 +159,15 @@ enum StrokeGeometry {
     /// only partly overlap the loop are deliberately left unselected.
     static func stroke(_ stroke: Stroke, isEnclosedBy lassoPolygon: [CGPoint]) -> Bool {
         guard lassoPolygon.count >= 3, !stroke.points.isEmpty else { return false }
+        // Cheap rejection: a stroke entirely inside the loop is entirely inside
+        // the loop's own bounding box, so anything reaching outside it is out
+        // without ray-casting a single sample.
+        guard boundingBox(of: lassoPolygon).spans(stroke.canvasBounds) else { return false }
         return stroke.points.allSatisfy { polygon(lassoPolygon, contains: $0.position) }
+    }
+
+    private static func boundingBox(of polygon: [CGPoint]) -> CGRect {
+        polygon.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
     }
 
     // MARK: - Selection picking
@@ -167,13 +178,14 @@ enum StrokeGeometry {
     static func stroke(_ stroke: Stroke, contains point: CGPoint, within radius: CGFloat) -> Bool {
         guard stroke.canvasBounds.insetBy(dx: -radius, dy: -radius).contains(point) else { return false }
 
-        let positions = stroke.points.map(\.position)
-        guard let firstPosition = positions.first else { return false }
+        let points = stroke.points
+        guard let firstPosition = points.first?.position else { return false }
         // A single-point stroke is a dot: no segment, so measure to the point.
-        guard positions.count >= 2 else { return firstPosition.distance(to: point) <= radius }
+        guard points.count >= 2 else { return firstPosition.distance(to: point) <= radius }
 
-        for index in 1 ..< positions.count
-        where distance(from: point, toSegment: positions[index - 1], positions[index]) <= radius {
+        for index in 1 ..< points.count
+        where distance(from: point, toSegment: points[index - 1].position,
+                       points[index].position) <= radius {
             return true
         }
         return false

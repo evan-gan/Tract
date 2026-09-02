@@ -36,6 +36,14 @@ struct CanvasTransform: Sendable {
         canvasPoint.applying(matrix)
     }
 
+    /// The canvas-space rect a view of this size is currently showing.
+    ///
+    /// The renderer culls against it: on an infinite canvas most of a long
+    /// document is off screen, and ink nobody can see costs nothing to skip.
+    func visibleCanvasRect(inViewOfSize viewSize: CGSize) -> CGRect {
+        CGRect(origin: .zero, size: viewSize).applying(matrix.inverted())
+    }
+
     /// Convert a canvas-space length — a stroke width, a radius — to screen points.
     ///
     /// Widths are stored in canvas space, so they have to grow and shrink with the

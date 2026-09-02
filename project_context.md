@@ -52,11 +52,17 @@ Tract/
 │   ├── CanvasUIView.swift        # UIView — pencil touches, 1-finger pan, pinch, pencil hover
 │   ├── FingerPanGestureRecognizer.swift # One-finger canvas pan; palm-rejecting
 │   ├── FingerPanArbiter.swift    # Pure palm-vs-finger rules behind that recognizer
-│   ├── CanvasRenderer.swift      # SwiftUI Canvas — strokes → screen paths
+│   ├── CanvasRenderer.swift      # SwiftUI Canvas — committed ink and the live stroke, one layer each
+│   ├── StrokePathCache.swift     # Canvas-space Paths per stroke, so pan/zoom never re-traces ink
+│   ├── CanvasContentLayer.swift  # Paper + ink; owns the fast-changing reads so chrome is not invalidated
+│   ├── CanvasSelectionLayer.swift # Lasso loop, selection outline, selection action menu
+│   ├── PencilHoverDot.swift      # The hover dot as a CALayer — moved inside the hover callback, not by SwiftUI
+│   ├── PencilHoverDotView.swift  # Hosts that layer above the selection chrome, on the canvas view's own frame
+│   ├── CanvasZoomIndicator.swift # The zoom pill, wired to the live scale
 │   ├── CanvasBackgroundView.swift # White paper + dot grid, both tracking the transform
 │   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, pan phase
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
-│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–500%, screen↔canvas conversion
+│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–500%, screen↔canvas conversion, visible rect
 │
 ├── Toolbar/                      # Fixed top chrome (close, title, save dot, problem wheel, export)
 │   ├── TopBarView.swift          # The one top pill: back, title, save dot, problem tag, Export
@@ -89,12 +95,11 @@ Tract/
 │   ├── SelectionStyle.swift      # Shared selection tokens: red, dash, standoff, softening
 │   ├── LassoPathView.swift       # The loop being traced, drawn closed and static
 │   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection, traced + cached
-│   ├── SelectionActionMenuView.swift # Floating glass menu a tap on the selection opens (Delete)
-│   └── PencilHoverDotView.swift  # Dot under the hovering nib, at the size the mark will be
+│   └── SelectionActionMenuView.swift # Floating glass menu a tap on the selection opens (Delete)
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures, TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
-│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths, pencil hover
+│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths + visible rect, pencil hover, path cache, sample thinning
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
@@ -165,6 +170,7 @@ Tract/
 │
 ├── Utilities/
 │   ├── CGPoint+Math.swift        # +, -, *, distance, midpoint
+│   ├── CGRect+Spans.swift        # Containment that works for flat rects, which CGRect's own does not
 │   ├── AppTint.swift             # The shared attention red: active tool, lasso, selection
 │   ├── Color+Hex.swift           # Color(hex:), hexString, SIMD4<Float>(color:)
 │   └── View+GlassChrome.swift    # .glassChrome() — shared Liquid Glass surface for all chrome
@@ -633,8 +639,10 @@ Apple Pencil → UIView.touchesBegan/Moved/Ended
   → guard touch.type == .pencil
   → coalescedTouches(for:)  ← captures all 240 Hz samples
   → StrokePoint (screen → canvas via CanvasTransform.toCanvas)
-  → CanvasViewModel.beginStroke / continueStroke / endStroke
-  → SwiftUI Canvas re-renders
+  → CanvasViewModel.beginStroke / continueStroke([StrokePoint]) / endStroke
+      ← the whole coalesced batch in one call, on the main thread, no Task hop
+      ← samples less than 0.75 *screen* points from the last one are dropped
+  → SwiftUI Canvas re-renders (the live stroke's layer only)
 
 One finger on an existing selection → UIPanGestureRecognizer (finger only, 1 touch)
   → gated by gestureRecognizerShouldBegin → CanvasViewModel.beginSelectionDrag(at:)
@@ -646,8 +654,44 @@ Two fingers → UIPinchGestureRecognizer (handles pan *and* zoom in one recogniz
 
 Apple Pencil hovering (not touching) → UIHoverGestureRecognizer (pencil touch type only)
   → CanvasViewModel.updatePencilHover(to:)   ← screen space, cleared on touch-down
-  → PencilHoverDotView
+  → PencilHoverDot (a CALayer inside CanvasUIView, moved in the same callback)
 ```
+
+---
+
+## Keeping the canvas smooth
+
+Everything below is load-bearing for how the app *feels* under a moving hand. The
+rule behind all of it: **a gesture must not make the app redo work that did not
+change.**
+
+- **Ink is traced in canvas space, once.** `StrokePathCache` holds a `Path` per
+  stroke, fingerprinted by sample count and bounds, and `CanvasRenderer` draws it
+  through `transform.matrix` on the context (`context.concatenate`) rather than
+  mapping every point to the screen. A pan or a pinch changes the matrix, not the
+  paths — nothing is re-traced. Stroke widths go in unscaled for the same reason:
+  the context already carries the zoom.
+- **Two ink layers, not one.** Committed strokes and the stroke under the pencil
+  each get their own `Canvas`. SwiftUI only re-runs the layer whose inputs
+  changed, so a sample at 240 Hz repaints one fresh mark instead of the page.
+- **Off-screen ink is culled** against `CanvasTransform.visibleCanvasRect(inViewOfSize:)`,
+  padded by the stroke's half line width.
+- **Canvas-tracking layers read the view model themselves.** `CanvasContentLayer`,
+  `CanvasSelectionLayer` and `CanvasZoomIndicator` exist so
+  that a pan, a pencil sample or a hover invalidates one small view. Read those
+  properties in `CanvasContainerView` instead and every piece of chrome — glass
+  included — is rebuilt on every frame of the gesture. **Do not fold them back in.**
+- **The dot grid is one path and one fill.** A fill per dot is hundreds of draw
+  calls a frame, close to ten thousand at the minimum spacing.
+- **Samples that land on top of each other are dropped** at the view model
+  (`minimumSampleScreenSpacing`), for ink, the lasso loop, the eraser sweep and
+  the retag sweep alike. The threshold is a *screen* distance, so zooming in to
+  write small keeps its detail.
+- **Hit tests read samples in place.** `StrokeGeometry` runs against every stroke
+  on the page for every erase sample; the throwaway `map(\.position)` array it
+  used to build per stroke was most of its cost. The lasso also rejects by
+  bounding box first — via `CGRect.spans`, because `CGRect.contains` answers false
+  for the flat rect a dead straight stroke has.
 
 ---
 
@@ -734,7 +778,9 @@ draws ink or previews it on screen must therefore put its width through
 `CanvasTransform.toScreen(length:)`, so zooming magnifies the drawing rather than
 spreading its points apart while the lines stay a fixed thickness.
 
-- `CanvasRenderer` scales each stroke's `lineWidth` by the transform.
+- `CanvasRenderer` draws through the transform on the graphics context, so a
+  stroke's stored `lineWidth` is magnified with its geometry — the conversion is
+  the same one, applied by the context rather than by hand.
 - The hover preview's diameter comes from `CanvasViewModel.pencilPreviewDiameter`,
   which is the same conversion applied to the current `strokeWidth`.
 - The exporters deliberately do **not** scale: they render in canvas space at 1:1.
@@ -747,14 +793,32 @@ spreading its points apart while the lines stay a fixed thickness.
 
 ## Pencil hover preview
 
-`PencilHoverDotView` shows where the nib will land, drawn at the size of the mark it
+`PencilHoverDot` shows where the nib will land, drawn at the size of the mark it
 would leave. `CanvasUIView` feeds it from a `UIHoverGestureRecognizer` restricted to
 the pencil touch type — a trackpad pointer also hovers, and a dot chasing the cursor
 would be claiming a nib that isn't there.
 
+- **It is a `CAShapeLayer`, not a SwiftUI view, and that is deliberate.** The dot is
+  claiming to *be* the nib, so a frame of lag reads as lag in the pencil itself. A
+  SwiftUI view cannot move until an observation invalidation, a body evaluation and a
+  layout pass have run; the layer's position is set inside the hover callback, in the
+  same run loop turn the event arrived on, with implicit animation switched off (a
+  layer's default is to animate a position change over a quarter second — the same lag
+  by another route). Do not move it back into SwiftUI.
 - The location is **screen** space, published straight from the recognizer on the main
   thread (no `Task`) so the dot cannot trail the pencil by a frame.
-- `beginStroke` clears it, so no dot is ever stranded under a nib that is drawing.
+- `CanvasViewModel` still owns the hover *state* — `pencilHoverLocation`,
+  `pencilPreviewDiameter`, `pencilPreviewColor` — and the layer reads it per event.
+  The size and colour are therefore a hover event behind a change made while the
+  pencil is held dead still, which no hand actually does.
+- `beginStroke` clears the state and `touchesBegan` hides the layer, so no dot is ever
+  stranded under a nib that is drawing.
+- **Tracked in `CanvasUIView`, hosted by `PencilHoverDotView`.** The recognizer lives
+  with the canvas; the layer is parented one level up so the selection's marching ants
+  cannot crawl over the nib preview — and below the glass, so the dot never floats on
+  the dock. The location crosses that boundary unconverted, so the two views have to
+  fill the same space; they are stacked full-bleed in `CanvasContainerView` for exactly
+  that reason.
 - Non-drawing tools preview in neutral grey; pens preview in the ink they will lay down.
 - The dot has a minimum diameter, or a hairline weight zoomed out would vanish exactly
   when the user needs to see where the pencil is pointing.
@@ -880,7 +944,7 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change how the selection outline is shaped | `SelectionRegion.swift` (the dilation and its tracing); `SelectionOutlineView.swift` for the curve smoothing and the re-trace cache |
 | Change what counts as grabbing a selection | `CanvasViewModel.selectionContains(_:)` |
 | Change how a selection is moved | The "Moving a selection" methods in `CanvasViewModel.swift`; the gestures live in `CanvasUIView.swift` |
-| Add an action to the selection menu | `selectionActions` in `CanvasContainerView.swift`; the menu itself renders whatever it is handed |
+| Add an action to the selection menu | `selectionActions` in `CanvasSelectionLayer.swift`; the menu itself renders whatever it is handed |
 | Change what counts as a tap rather than a drag | `selectionTapMovementLimit` / `selectionTapDurationLimit` in `CanvasViewModel.swift` |
 | Change the dock's quick colours | `InkColor.dockPalette` in `InkColor.swift` |
 | Change how the dock snaps | `DockEdge.nearest(to:in:)` in `DockEdge.swift` |
@@ -888,7 +952,7 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change a tool glyph, or what the pen's tip shows | `ToolIconView.swift`; the ink is threaded in from `viewModel.strokeColor` via `ToolDockView` → `ToolCarouselView` → `DockToolButton` |
 | Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift` |
 | Change how ink weight responds to zoom | `CanvasTransform.toScreen(length:)` |
-| Change the hover preview's look | `PencilHoverDotView.swift`; its size and colour come from `CanvasViewModel.pencilPreviewDiameter` / `pencilPreviewColor` |
+| Change the hover preview's look | `PencilHoverDot.swift`; its size and colour come from `CanvasViewModel.pencilPreviewDiameter` / `pencilPreviewColor` |
 | Change canvas background | `CanvasBackgroundView.swift` (white in both colour schemes — it is paper, not chrome) |
 | Change the grid's spacing, density or dot size | `CanvasGrid.swift` |
 | Change how the canvas is panned, or tune palm rejection | `FingerPanArbiter.swift` for the thresholds and rules; `FingerPanGestureRecognizer.swift` for the touch bookkeeping |
@@ -911,6 +975,8 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change the glass chrome style | `View+GlassChrome.swift` |
 | Change preset colors | `presetColors` array in `ColorPresetGrid.swift` |
 | Change the active-tool / selection red | `AppTint.active` in `AppTint.swift` |
-| Change stroke smoothing | `CanvasRenderer.buildPath(for:)` |
+| Change stroke smoothing | `StrokePathCache.makePath(for:)` — and `StrokeRasterizer.path(for:offset:)`, which must match it |
+| Change how much pencil detail is kept | `minimumSampleScreenSpacing` in `CanvasViewModel.swift` |
+| Speed up drawing or panning | "Keeping the canvas smooth" above — path cache, layer split, culling, view isolation |
 | Swap renderer for Metal | Replace `CanvasRenderer.swift` with an `MTKView` wrapper — data model unchanged |
 | Add AI feature | Read from `Stroke.points` (telemetry), `startTime`/`endTime`, `sessionID` |

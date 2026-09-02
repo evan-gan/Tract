@@ -19,25 +19,30 @@ struct CanvasContainerView: View {
     /// Measured so a top-parked dock can settle below the title row.
     @State private var topChromeHeight: CGFloat = 0
 
+    /// The hover dot is tracked by the canvas view and drawn above the selection
+    /// chrome, so the one object is handed to both.
+    @State private var pencilHoverDot = PencilHoverDot()
+
     var body: some View {
+        // Every canvas-tracking layer reads the view model itself rather than
+        // being handed its state here. That is what keeps a pan, a pencil sample
+        // or a hover from invalidating this body — and with it the whole of the
+        // chrome — sixty to a hundred and twenty times a second.
         ZStack {
-            canvasBackground
-            CanvasRenderer(
-                strokes: viewModel.strokes,
-                activeStroke: viewModel.activeStroke,
-                transform: viewModel.canvasTransform,
-                selectedStrokeIDs: viewModel.selectedStrokeIDs,
-                selectionOffset: viewModel.selectionDragOffset,
-                problemInk: viewModel.problemInkStyling
-            )
-            .ignoresSafeArea()
-            CanvasView(viewModel: viewModel)
+            CanvasContentLayer(viewModel: viewModel)
+                .ignoresSafeArea()
+            CanvasView(viewModel: viewModel, hoverDot: pencilHoverDot)
                 .ignoresSafeArea()
             // Sits above the touch layer but passes every touch through, so the
             // lasso keeps tracking while its own outline is on screen.
-            selectionOverlay
+            CanvasSelectionLayer(viewModel: viewModel)
                 .ignoresSafeArea()
-            pencilHoverPreview
+            // Above the selection chrome so the marching ants cannot crawl over
+            // the nib preview, and below the glass so the dot never floats on
+            // the dock. Must share the canvas view's frame — see
+            // `PencilHoverDotView`.
+            PencilHoverDotView(hoverDot: pencilHoverDot)
+                .allowsHitTesting(false)
                 .ignoresSafeArea()
             // Chrome deliberately keeps the safe area: it is what stops the
             // dock from parking under the status bar or the home indicator.
@@ -57,11 +62,6 @@ struct CanvasContainerView: View {
     }
 
     // MARK: - Sub-regions
-
-    private var canvasBackground: some View {
-        CanvasBackgroundView(transform: viewModel.canvasTransform)
-            .ignoresSafeArea()
-    }
 
     /// All floating controls. They share a single `GlassEffectContainer` because
     /// glass cannot sample other glass — separate containers would render the
@@ -83,60 +83,6 @@ struct CanvasContainerView: View {
         }
     }
 
-    /// Lasso and selection chrome track canvas content rather than the screen,
-    /// so they stay outside the glass container and never take a glass material.
-    private var selectionOverlay: some View {
-        ZStack {
-            if !viewModel.lassoPath.isEmpty {
-                LassoPathView(
-                    canvasPoints: viewModel.lassoPath,
-                    transform: viewModel.canvasTransform
-                )
-            }
-            if viewModel.hasSelection {
-                SelectionOutlineView(
-                    selectedStrokes: viewModel.selectedStrokes,
-                    transform: viewModel.canvasTransform,
-                    standoff: viewModel.selectionStandoff,
-                    dragOffset: viewModel.selectionDragOffset
-                )
-            }
-            if let menuAnchor = viewModel.selectionMenuAnchor {
-                SelectionActionMenuView(
-                    anchor: menuAnchor + viewModel.selectionDragOffset,
-                    transform: viewModel.canvasTransform,
-                    actions: selectionActions
-                )
-            }
-        }
-    }
-
-    /// What the selection's floating menu offers. Held here rather than in the
-    /// menu so the menu stays a presentation of whatever actions it is handed.
-    private var selectionActions: [SelectionAction] {
-        [
-            SelectionAction(
-                title: "Delete",
-                systemImage: "trash",
-                isDestructive: true,
-                perform: viewModel.deleteSelection
-            )
-        ]
-    }
-
-    /// The nib preview tracks the pencil rather than the chrome, so like the
-    /// selection layer it stays out of the glass container.
-    @ViewBuilder
-    private var pencilHoverPreview: some View {
-        if let hoverLocation = viewModel.pencilHoverLocation {
-            PencilHoverDotView(
-                location: hoverLocation,
-                diameter: viewModel.pencilPreviewDiameter,
-                color: viewModel.pencilPreviewColor
-            )
-        }
-    }
-
     /// Title bar centred, zoom pill pinned trailing. Keeping both in one fixed
     /// row leaves every other edge free for the movable dock.
     private var topChromeRow: some View {
@@ -155,11 +101,7 @@ struct CanvasContainerView: View {
 
             HStack {
                 Spacer()
-                ZoomIndicatorView(
-                    scale: viewModel.canvasTransform.scale,
-                    onReset: viewModel.resetZoom
-                )
-                .glassEffectID("zoomIndicator", in: glassNamespace)
+                CanvasZoomIndicator(viewModel: viewModel, glassNamespace: glassNamespace)
             }
         }
         .padding(.horizontal, 16)

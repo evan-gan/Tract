@@ -66,4 +66,35 @@ struct CanvasTransformTests {
         transform.translation = CGPoint(x: 400, y: -250)
         #expect(transform.toScreen(length: 6) == 6)
     }
+
+    @Test("Unzoomed and unpanned, the visible canvas rect is the view itself")
+    func visibleRectMatchesTheViewAtRest() {
+        let transform = CanvasTransform()
+        let visible = transform.visibleCanvasRect(inViewOfSize: CGSize(width: 800, height: 600))
+        #expect(visible == CGRect(x: 0, y: 0, width: 800, height: 600))
+    }
+
+    @Test("Zooming in shrinks the visible canvas rect, panning slides it")
+    func visibleRectFollowsPanAndZoom() {
+        var transform = CanvasTransform()
+        transform.scale = 2
+        transform.translation = CGPoint(x: -100, y: -100)
+
+        let visible = transform.visibleCanvasRect(inViewOfSize: CGSize(width: 800, height: 600))
+
+        // The screen origin sits 50 canvas points in at 2x, and 800 screen points
+        // cover 400 of canvas.
+        #expect(visible == CGRect(x: 50, y: 50, width: 400, height: 300))
+    }
+
+    @Test("Ink outside the visible rect is what the renderer can skip")
+    func visibleRectExcludesOffscreenInk() {
+        var transform = CanvasTransform()
+        transform.translation = CGPoint(x: -1000, y: 0)
+
+        let visible = transform.visibleCanvasRect(inViewOfSize: CGSize(width: 800, height: 600))
+
+        #expect(!visible.intersects(CGRect(x: 0, y: 0, width: 100, height: 100)))
+        #expect(visible.intersects(CGRect(x: 1050, y: 0, width: 100, height: 100)))
+    }
 }
