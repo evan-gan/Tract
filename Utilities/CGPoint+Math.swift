@@ -14,9 +14,16 @@ extension CGPoint {
     }
 
     func distance(to other: CGPoint) -> CGFloat {
+        squaredDistance(to: other).squareRoot()
+    }
+
+    /// Distance without the square root. Comparing two of these orders points
+    /// exactly as their real distances do, which is all a nearest-point search
+    /// needs — and the root is the expensive half of the calculation.
+    func squaredDistance(to other: CGPoint) -> CGFloat {
         let dx = x - other.x
         let dy = y - other.y
-        return (dx * dx + dy * dy).squareRoot()
+        return dx * dx + dy * dy
     }
 
     /// Midpoint between this point and another.

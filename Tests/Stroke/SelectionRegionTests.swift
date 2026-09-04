@@ -54,6 +54,37 @@ struct SelectionRegionTests {
         }
     }
 
+    @Test("A long diagonal holds its standoff along the whole length")
+    func holdsTheStandoffAlongADiagonal() throws {
+        // The field is seeded in a band around the ink and swept outwards from
+        // there, so a stroke far longer than one grid cell is the case where a
+        // gap in that band would show up as the outline pinching in or out.
+        let diagonal = [CGPoint(x: 0, y: 0), CGPoint(x: 400, y: 400)]
+        let contours = SelectionRegion.contours(around: [diagonal], radius: standoff)
+        let contour = try #require(contours.first)
+
+        let tolerance = standoff / 4
+        for step in stride(from: CGFloat(50), through: 350, by: 50) {
+            let probe = CGPoint(x: step, y: step)
+            #expect(abs(distance(from: probe, toEdgesOf: contour) - standoff) < tolerance)
+        }
+    }
+
+    @Test("Every sample outside the frame is further from the ink than every sample inside")
+    func theFrameSeparatesInsideFromOutside() throws {
+        let line = horizontalLine(atY: 100, fromX: 0, toX: 200)
+        let contour = try #require(SelectionRegion.contours(around: [line], radius: standoff).first)
+        let tolerance = standoff / 4
+
+        // Well inside and well outside the standoff, in both axes, so a sweep
+        // that lost track of the nearest ink anywhere would show up here.
+        #expect(StrokeGeometry.polygon(contour, contains: CGPoint(x: 100, y: 100)))
+        #expect(StrokeGeometry.polygon(contour, contains: CGPoint(x: -standoff + tolerance, y: 100)))
+        #expect(StrokeGeometry.polygon(contour, contains: CGPoint(x: 100, y: 100 + standoff - tolerance)))
+        #expect(StrokeGeometry.polygon(contour, contains: CGPoint(x: 100, y: 100 + standoff + tolerance)) == false)
+        #expect(StrokeGeometry.polygon(contour, contains: CGPoint(x: 200 + standoff + tolerance, y: 100)) == false)
+    }
+
     @Test("Two lines further apart than twice the standoff get an outline each")
     func farApartInkIsFramedSeparately() {
         let contours = SelectionRegion.contours(

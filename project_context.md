@@ -243,8 +243,21 @@ Selection rules worth keeping:
 - The frame **hugs the ink**, it is neither a bounding box nor a hull. It is the
   *dilation* of the selected strokes: every point within `SelectionStyle.standoff`
   — a quarter inch, at 132 pt/inch on iPad — of a selected stroke.
-  `SelectionRegion.contours(around:radius:)` builds it by splatting a distance
-  field over the ink and tracing the standoff iso-line with marching squares.
+  `SelectionRegion.contours(around:radius:)` builds it by laying a distance field
+  over the ink and tracing the standoff iso-line with marching squares.
+- **The distance field is seeded and swept, not measured everywhere.** Only the
+  samples in a band about a cell and a half either side of the ink are measured
+  against it directly; two sweeps then carry those closest ink *points* out over
+  the rest of the grid, each sample re-measuring its neighbours' answer from
+  where it actually sits (a vector distance transform — the Danielsson idea).
+  The cost is therefore set by the grid, which `maximumGridSide` caps at 256 a
+  side, and not by how much ink is selected. The measure-every-sample-against-
+  every-segment version this replaced grew with the two multiplied together and
+  ran 3–5× slower on a page of handwriting, unboundedly worse on a big one.
+  Distances are kept squared until the sweeps finish, so nothing in the inner
+  loops takes a square root, and the crossings marching squares finds are held in
+  `CrossingGraph` — flat arrays addressed by grid-edge key, because a dictionary
+  of neighbour lists over tens of thousands of edges cost more than the tracing.
 - **Ink far enough apart gets its own outline.** That is not a special case: two
   strokes more than two standoffs apart grow dilated regions that never meet, so
   marching squares returns two loops. They merge into one the moment the regions

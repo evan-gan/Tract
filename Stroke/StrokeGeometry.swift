@@ -46,17 +46,22 @@ enum StrokeGeometry {
             && probe.y >= min(start.y, end.y) && probe.y <= max(start.y, end.y)
     }
 
-    /// Shortest distance from a point to a line segment.
-    static func distance(from point: CGPoint, toSegment start: CGPoint, _ end: CGPoint) -> CGFloat {
+    /// The point on a line segment lying closest to `point`. A zero-length
+    /// segment is a dot, and its start is the only point it has.
+    static func closestPoint(onSegment start: CGPoint, _ end: CGPoint, to point: CGPoint) -> CGPoint {
         let segment = CGPoint(x: end.x - start.x, y: end.y - start.y)
         let lengthSquared = segment.x * segment.x + segment.y * segment.y
-        guard lengthSquared > 0 else { return point.distance(to: start) }
+        guard lengthSquared > 0 else { return start }
 
         // Projection of the point onto the segment, clamped to the segment's span.
         let rawProjection = ((point.x - start.x) * segment.x + (point.y - start.y) * segment.y) / lengthSquared
         let clamped = min(max(rawProjection, 0), 1)
-        let closest = CGPoint(x: start.x + segment.x * clamped, y: start.y + segment.y * clamped)
-        return point.distance(to: closest)
+        return CGPoint(x: start.x + segment.x * clamped, y: start.y + segment.y * clamped)
+    }
+
+    /// Shortest distance from a point to a line segment.
+    static func distance(from point: CGPoint, toSegment start: CGPoint, _ end: CGPoint) -> CGFloat {
+        point.distance(to: closestPoint(onSegment: start, end, to: point))
     }
 
     /// Shortest distance between two line segments.
