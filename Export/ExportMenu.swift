@@ -21,7 +21,16 @@ struct ExportMenu: View {
     /// would copy the whole drawing on each frame while the user is drawing.
     let makeDocument: () -> SplineDocument
 
-    private let adapters: [any ExportAdapter] = [SVGExporter(), PDFExporter(), PNGExporter()]
+    /// "Problems" is the same PDF exporter under its worksheet layout: one
+    /// labelled cell per tagged problem, six to a page. It is offered as its own
+    /// format rather than behind a second tap, because the choice is which
+    /// document you want, not a setting on a document you already asked for.
+    private let adapters: [any ExportAdapter] = [
+        SVGExporter(),
+        PDFExporter(),
+        PDFExporter(options: .problemSheet),
+        PNGExporter()
+    ]
 
     /// Both presentations are driven by an optional value rather than by a
     /// separate boolean. A boolean flipped in the same update as the value it
@@ -34,7 +43,7 @@ struct ExportMenu: View {
     var body: some View {
         HStack(spacing: 2) {
             if isExpanded {
-                ForEach(adapters, id: \.fileExtension) { adapter in
+                ForEach(adapters, id: \.displayName) { adapter in
                     formatButton(for: adapter)
                 }
             } else {
@@ -108,7 +117,7 @@ struct ExportMenu: View {
         do {
             let data = try adapter.export(document: document, viewport: nil)
             let fileName = ExportFileNaming.fileName(
-                title: document.title,
+                title: document.title + adapter.fileNameSuffix,
                 fileExtension: adapter.fileExtension
             )
             let temporaryURL = FileManager.default.temporaryDirectory.appending(path: fileName)

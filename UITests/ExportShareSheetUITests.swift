@@ -34,6 +34,28 @@ final class ExportShareSheetUITests: XCTestCase {
                       + "not only after a previous one has populated the view's state.")
     }
 
+    /// The problem sheet is a second PDF behind the same control, and the two are
+    /// told apart only by their button labels — so the wiring is worth a test.
+    func testProblemSheetIsOfferedAsItsOwnFormat() throws {
+        let app = launchWithSampleDocuments()
+        openSampleDocument(in: app)
+
+        let exportButton = app.buttons["Export"].firstMatch
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
+                      "The canvas should offer an Export button.")
+        exportButton.tap()
+
+        let problemsOption = app.buttons["Export as Problems"].firstMatch
+        XCTAssertTrue(problemsOption.waitForExistence(timeout: 10),
+                      "The expanded control should offer the per-problem sheet alongside PDF.")
+        problemsOption.tap()
+
+        XCTAssertTrue(waitForShareSheet(in: app),
+                      "Exporting the problem sheet should reach the share sheet. "
+                      + "The sample drawings carry no tags, so this also proves an "
+                      + "all-untagged document still produces its one explanatory page.")
+    }
+
     // MARK: - Steps
 
     private func launchWithSampleDocuments() -> XCUIApplication {

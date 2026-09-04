@@ -11,7 +11,7 @@ struct SVGExporter: ExportAdapter {
         let strokes = StrokeRasterizer.strokes(document.strokes, intersecting: viewport)
         guard !strokes.isEmpty else { throw ExportError.noStrokes }
 
-        let bounds = viewport ?? StrokeRasterizer.unionBounds(of: strokes)
+        let bounds = viewport ?? StrokeRasterizer.inkedBounds(of: strokes)
         guard !bounds.isNull else { throw ExportError.noStrokes }
         let svg = buildSVG(strokes: strokes, bounds: bounds)
 

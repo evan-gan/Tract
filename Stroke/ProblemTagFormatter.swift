@@ -25,6 +25,11 @@ struct ProblemTagFormatter: Sendable {
 
     static let standard = ProblemTagFormatter()
 
+    /// How a problem is written on a worksheet: "1", "1a", "1bIV". The levels
+    /// already change alphabet as they nest (1 → a → I), so the separator only
+    /// adds width to a heading that has to fit inside a small cell.
+    static let compact = ProblemTagFormatter(levelSeparator: "")
+
     func text(for tag: ProblemTag) -> String {
         guard !tag.isEmpty else { return untitledText }
         return tag.components.map(text(for:)).joined(separator: levelSeparator)

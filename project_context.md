@@ -155,16 +155,16 @@ Tract/
 │
 ├── Export/
 │   ├── ExportAdapter.swift       # Protocol all exporters conform to
-│   ├── ExportMenu.swift          # Filled capsule on the bar; expands in place into formats → share sheet
+│   ├── ExportMenu.swift          # Filled capsule on the bar; expands in place into SVG / PDF / Problems / PNG → share sheet
 │   ├── ExportFileNaming.swift    # Document title → safe file name
-│   ├── StrokeRasterizer.swift    # Shared strokes → CGContext drawing (PNG, PDF, thumbnails)
+│   ├── StrokeRasterizer.swift    # Shared strokes → CGContext drawing (PNG, PDF, thumbnails); `inkedBounds` is the nib-padded crop box
 │   ├── InkFitTransform.swift     # Shared "scale ink to fit this box and centre it" maths
 │   ├── ThumbnailRenderer.swift   # Strokes → the fixed-size card preview PNG
 │   ├── SVGExporter.swift         # Strokes → SVG paths with data-* AI attributes
 │   ├── PaperSize.swift           # Standard print paper sizes in PDF points + orientation
-│   ├── PDFExportOptions.swift    # Paper, margins, scale ceiling, layout + problem-table grid
+│   ├── PDFExportOptions.swift    # Paper, margins, scale ceiling, layout + problem-table grid; the `problemSheet` preset
 │   ├── ProblemGrouping.swift     # Strokes → ProblemGroups, keyed on Stroke.problemTag
-│   ├── PDFPageRenderer.swift     # Paints PDF pages: paper, cell borders, labels, fitted ink
+│   ├── PDFPageRenderer.swift     # Paints PDF pages: paper, cell borders, labels, fitted ink, the untagged last page
 │   ├── PDFExporter.swift         # ExportAdapter over the above; whole-drawing or problem table
 │   └── PNGExporter.swift         # UIGraphicsImageRenderer
 │
@@ -844,6 +844,15 @@ margin or into a neighbouring cell. `PDFExportOptions.maximumScale` caps
 enlargement; at the default of 1 the drawing prints at its canvas size and is
 only ever scaled *down*. Raise it to let small work fill the page or its cell.
 
+The box being fitted is `StrokeRasterizer.inkedBounds`, **not** `unionBounds`.
+`Stroke.canvasBounds` tracks the centreline the samples describe, and a stroke is
+painted `lineWidth` wide about that line — so fitting the centrelines crops half a
+nib off the outermost mark, a flat edge that gets worse the further the drawing is
+scaled up. `inkedBounds` stands the box off by half the widest drawing stroke's
+width (a lasso loop is painted by nothing, so it cannot widen it). Every consumer
+that crops or fits goes through it: PDF pages and problem cells, PNG, SVG and
+library thumbnails.
+
 `Tests/Export/PDFExporterTests.swift` guards the blank-page bug by rasterising
 the finished page through `PDFPageInspector` and asserting it has ink on it —
 page count and media box alone would have passed against the broken version.
@@ -929,6 +938,31 @@ options.layout = .problemTable(layout)
 let data = try PDFExporter(options: options).export(document: document, viewport: nil)
 ```
 
+**The problem sheet** is that layout with the defaults a worksheet wants, and is
+what the Export control's **Problems** button produces —
+`PDFExportOptions.problemSheet`:
+
+- a 2 x 3 grid, so **six problems to a page**, each sub-part in its own cell
+  (`groupingDepth` nil);
+- headings written the way a worksheet writes them — `1`, `1a`, `1b`, `1bIV` —
+  which is `ProblemTagFormatter.compact`, the `ProblemTableLayout` default;
+- `maximumScale` of `PDFExportOptions.problemCellMaximumScale` (12), so each
+  problem's ink is **scaled up to fill its cell**, not left at canvas size;
+- untagged strokes gathered onto a **final page of their own**, under the
+  heading `untaggedLabel` and the line `untaggedNote` — "These strokes are not
+  attributed to any problem." They never take a cell away from a problem, and a
+  document with nothing tagged still exports as that one explanatory page.
+  `untaggedLabel = nil` drops them entirely instead.
+
+The untagged page's geometry is `ProblemTableLayout.untaggedHeadingRect` /
+`untaggedNoteRect` / `untaggedInkRect`, all measured off the page's content rect
+rather than off a cell; `PDFPageRenderer.drawProblemTablePages` splits the groups
+on `tag == nil` and paints the cell pages first.
+
+`PDFExporter.displayName` and `fileNameSuffix` are computed from the layout, so
+the same adapter shows up in the export control twice — "PDF" and "Problems" —
+and the two files are told apart in the share sheet.
+
 Still open: sub-parts currently share their problem's cell as one drawing when
 grouped by depth. Laying them out as *nested* sub-cells with their own headings
 is a layout change in `PDFPageRenderer`, not a format change.
@@ -963,6 +997,9 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change how ink is rasterised (PNG, PDF, thumbnails) | `StrokeRasterizer.swift` |
 | Change the PDF's paper size, orientation or margins | `PDFExportOptions.swift`; add a size to `PaperSize.standardSizes` |
 | Change the problem table's grid, labels or borders | `ProblemTableLayout` in `PDFExportOptions.swift`; drawing in `PDFPageRenderer.swift` |
+| Change how many problems land on a page, or how far their ink is scaled up | `PDFExportOptions.problemSheet` — `columns`/`rows` on its layout, `problemCellMaximumScale` for the fit |
+| Change how a problem's heading is written ("1a" vs "1.a") | `tagFormatter` on `ProblemTableLayout`; the notations themselves are `ProblemTagFormatter.compact` / `.standard` |
+| Change the untagged page's heading, note or layout | `untaggedLabel` / `untaggedNote` and the `untagged*Rect` helpers in `PDFExportOptions.swift`; `PDFPageRenderer.drawUntaggedPage` |
 | Change how strokes are bucketed into problems | `ProblemGrouping.swift` (reads `Stroke.problemTag`); `ProblemTableLayout.groupingDepth` picks the level |
 | Add a problem numbering notation (Greek, ①②③, …) | New `ProblemLabelStyle` value + register it in a `ProblemTagFormatter`; no stored-format change |
 | Change how a problem tag reads on the page | `ProblemTagFormatter.swift` (`levelSeparator`, fallbacks) |

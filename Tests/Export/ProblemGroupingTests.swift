@@ -33,8 +33,11 @@ struct ProblemGroupingTests {
 
         let bounds = ProblemGrouping.groups(from: strokes, outline: builder.outline)[0].inkBounds
 
-        #expect(bounds.minX == 0)
-        #expect(bounds.maxX == 1000)
+        // Half of the 4-point nib sits outside the centreline the samples trace,
+        // so the box has to stand off by 2 or the outer edge of each square is
+        // sliced down the middle when the group is fitted to its cell.
+        #expect(bounds.minX == -2)
+        #expect(bounds.maxX == 1002)
     }
 
     @Test("Groups order by position, so problem 2 comes before problem 10")

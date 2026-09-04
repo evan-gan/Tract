@@ -12,9 +12,17 @@ import UIKit
 struct PDFExporter: ExportAdapter {
     let fileExtension = "pdf"
     let mimeType = "application/pdf"
-    let displayName = "PDF"
 
     var options = PDFExportOptions()
+
+    /// The two layouts are two different things to a user — a picture of the
+    /// drawing, or a worksheet — so they are named apart in the export control
+    /// even though both write a PDF.
+    var displayName: String { options.layout.isProblemTable ? "Problems" : "PDF" }
+
+    /// Both layouts would otherwise share one file name, and a share sheet full
+    /// of identically named PDFs is impossible to tell apart.
+    var fileNameSuffix: String { options.layout.isProblemTable ? " problems" : "" }
 
     func export(document: SplineDocument, viewport: CGRect?) throws -> Data {
         let strokes = StrokeRasterizer.inkStrokes(document.strokes, intersecting: viewport)

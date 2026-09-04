@@ -10,6 +10,27 @@ enum StrokeRasterizer {
         strokes.reduce(CGRect.null) { $0.union($1.canvasBounds) }
     }
 
+    /// The smallest rect containing the ink as it is actually *painted*, in
+    /// canvas space. `.null` when there is nothing to bound.
+    ///
+    /// `unionBounds` traces the centreline the samples describe, but a stroke is
+    /// drawn `lineWidth` wide about that line and capped round at its ends, so
+    /// half a nib always sits outside it. Cropping or fitting to the centreline
+    /// shaves that half off — a flat edge down the outermost mark, and the more
+    /// the drawing is scaled up to fill its box the more obvious it gets.
+    static func inkedBounds(of strokes: [Stroke]) -> CGRect {
+        let centrelineBounds = unionBounds(of: strokes)
+        guard !centrelineBounds.isNull else { return centrelineBounds }
+
+        // The widest nib in the set: any narrower stroke is covered by it, and
+        // per-stroke padding would need per-stroke bounds to be worth anything.
+        let widestNib = strokes
+            .filter(\.style.tool.isDrawingTool)
+            .map(\.style.lineWidth)
+            .max() ?? 0
+        return centrelineBounds.insetBy(dx: -widestNib / 2, dy: -widestNib / 2)
+    }
+
     static func strokes(_ strokes: [Stroke], intersecting viewport: CGRect?) -> [Stroke] {
         guard let viewport else { return strokes }
         return strokes.filter { $0.canvasBounds.intersects(viewport) }
