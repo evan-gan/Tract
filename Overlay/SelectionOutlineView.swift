@@ -6,19 +6,17 @@ import SwiftUI
 /// the rest of the selection gets an outline of its own instead of being roped
 /// in by one shared frame.
 struct SelectionOutlineView: View {
-    let selectedStrokes: [Stroke]
+    /// The traced frame, in canvas space, one closed contour per piece of ink.
+    /// Traced by `CanvasViewModel` when the selection changes rather than here:
+    /// building a distance field is far too expensive to redo on every frame of
+    /// the march, and a view that caches it in its own `@State` has to write that
+    /// state during a view update — a write SwiftUI may drop, which is exactly
+    /// how this outline used to go missing until the next pinch.
+    let contours: [[CGPoint]]
     let transform: CanvasTransform
-    /// How far the frame stands off the ink, in canvas space. Owned by the view
-    /// model and fixed when the selection is made — see
-    /// `CanvasViewModel.selectionStandoff`.
-    let standoff: CGFloat
-    /// Live drag translation in canvas space. Applied on top of the cached shape
+    /// Live drag translation in canvas space. Applied on top of the traced shape
     /// so moving a selection never re-traces it.
     var dragOffset: CGPoint = .zero
-
-    /// The traced contours, in canvas space. Held as state because building a
-    /// distance field is far too expensive to redo on every frame of the march.
-    @State private var contours: [[CGPoint]] = []
 
     var body: some View {
         // A timeline drives the march rather than an animated @State value:
@@ -34,7 +32,6 @@ struct SelectionOutlineView: View {
             }
         }
         .allowsHitTesting(false)
-        .onChange(of: shapeIdentity, initial: true) { contours = traceContours() }
     }
 
     /// Walks the dash pattern back by exactly one cycle every `marchDuration`,
@@ -42,33 +39,6 @@ struct SelectionOutlineView: View {
     private func marchPhase(at date: Date) -> CGFloat {
         let cycles = date.timeIntervalSinceReferenceDate / SelectionStyle.marchDuration
         return -CGFloat(cycles.truncatingRemainder(dividingBy: 1)) * SelectionStyle.dashPeriod
-    }
-
-    // MARK: - Tracing
-
-    /// Everything that can change the outline's shape: which strokes are
-    /// selected, how many samples they hold, and where they sit. Navigation is
-    /// deliberately absent — panning and zooming a selection around costs nothing
-    /// because neither re-traces it.
-    private var shapeIdentity: SelectionShapeIdentity {
-        SelectionShapeIdentity(
-            strokeIDs: selectedStrokes.map(\.id),
-            pointCounts: selectedStrokes.map(\.points.count),
-            inkBounds: selectedStrokes.reduce(CGRect.null) { $0.union($1.canvasBounds) },
-            standoff: standoff
-        )
-    }
-
-    /// Traces in canvas space at a standoff that was fixed when the selection was
-    /// made, so the contours are plain canvas geometry from then on: zooming
-    /// magnifies the frame along with the ink it frames, exactly as it magnifies
-    /// stroke width. Re-tracing to hold a literal quarter inch on screen would
-    /// mean rebuilding a distance field on every frame of a pinch, which is the
-    /// one thing this cache exists to avoid.
-    private func traceContours() -> [[CGPoint]] {
-        let polylines = selectedStrokes.map { $0.points.map(\.position) }
-        guard !polylines.isEmpty else { return [] }
-        return SelectionRegion.contours(around: polylines, radius: standoff)
     }
 
     // MARK: - Drawing
@@ -98,13 +68,4 @@ struct SelectionOutlineView: View {
         }
         path.closeSubpath()
     }
-}
-
-/// Fingerprint of a selection's shape. Comparing this is what decides whether
-/// the outline has to be traced again.
-private struct SelectionShapeIdentity: Equatable {
-    let strokeIDs: [UUID]
-    let pointCounts: [Int]
-    let inkBounds: CGRect
-    let standoff: CGFloat
 }

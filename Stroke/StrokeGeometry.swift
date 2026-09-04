@@ -133,26 +133,42 @@ enum StrokeGeometry {
 
     // MARK: - Lasso
 
-    /// Ray-casting point-in-polygon test. The polygon is treated as closed, so the
-    /// caller does not need to repeat the first vertex at the end.
+    /// Point-in-polygon test by **winding number**. The polygon is treated as
+    /// closed, so the caller does not need to repeat the first vertex at the end.
+    ///
+    /// Winding rather than the even-odd rule because a hand-drawn lasso is not a
+    /// simple polygon: circling fast overshoots the start, and circling *twice*
+    /// — which is what people do when they are hurrying — wraps the ink two
+    /// times over. Even-odd counts two wraps as "outside" and would drop the
+    /// whole selection; a non-zero winding number keeps it. The two rules agree
+    /// everywhere on a loop that does not cross itself, so nothing else changes.
     static func polygon(_ polygon: [CGPoint], contains point: CGPoint) -> Bool {
         guard polygon.count >= 3 else { return false }
 
-        var isInside = false
+        var windingNumber = 0
         var previousIndex = polygon.count - 1
         for currentIndex in polygon.indices {
-            let current = polygon[currentIndex]
-            let previous = polygon[previousIndex]
-            // Count edges that straddle the point's horizontal ray to its right.
-            let straddlesRay = (current.y > point.y) != (previous.y > point.y)
-            if straddlesRay {
-                let crossingX = (previous.x - current.x) * (point.y - current.y)
-                    / (previous.y - current.y) + current.x
-                if point.x < crossingX { isInside.toggle() }
+            let start = polygon[previousIndex]
+            let end = polygon[currentIndex]
+            // Each edge crossing the point's horizontal line counts +1 or -1 by
+            // the side the point falls on, so laps around it add up instead of
+            // cancelling out.
+            if start.y <= point.y {
+                if end.y > point.y, sideOfLine(from: start, to: end, point: point) > 0 {
+                    windingNumber += 1
+                }
+            } else if end.y <= point.y, sideOfLine(from: start, to: end, point: point) < 0 {
+                windingNumber -= 1
             }
             previousIndex = currentIndex
         }
-        return isInside
+        return windingNumber != 0
+    }
+
+    /// Cross product of the edge with the vector to `point`: positive when the
+    /// point lies left of the directed edge, negative right of it, zero on it.
+    private static func sideOfLine(from start: CGPoint, to end: CGPoint, point: CGPoint) -> CGFloat {
+        (end.x - start.x) * (point.y - start.y) - (point.x - start.x) * (end.y - start.y)
     }
 
     /// Whether every sample of a stroke falls inside the lasso loop. Strokes that

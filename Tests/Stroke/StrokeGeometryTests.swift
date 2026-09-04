@@ -98,6 +98,21 @@ struct PolygonContainmentTests {
         let line = [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)]
         #expect(StrokeGeometry.polygon(line, contains: CGPoint(x: 5, y: 5)) == false)
     }
+
+    @Test("A point circled twice is still inside — two laps do not cancel out")
+    func doubleLapLoop() {
+        // What a hurried lasso draws: round the ink, and round it again.
+        let twoLaps = square + square
+        #expect(StrokeGeometry.polygon(twoLaps, contains: CGPoint(x: 50, y: 50)))
+    }
+
+    @Test("A loop that overshoots its own start still contains what it went round")
+    func selfCrossingLoop() {
+        // Round the square, then carry on past the start into a small tail that
+        // crosses the first edge — the usual way a fast circle ends.
+        let overshooting = square + [CGPoint(x: -20, y: -20), CGPoint(x: 50, y: -20)]
+        #expect(StrokeGeometry.polygon(overshooting, contains: CGPoint(x: 50, y: 50)))
+    }
 }
 
 @Suite("Stroke against lasso and eraser")

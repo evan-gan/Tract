@@ -222,6 +222,16 @@ final class CanvasViewModel {
         strokes.filter { selectedStrokeIDs.contains($0.id) }
     }
 
+    /// The traced frame around the selection, in canvas space — one closed
+    /// contour per piece of ink the selection splits into.
+    ///
+    /// Traced here, once, whenever the selection changes, rather than by the
+    /// view that draws it: a view computing it into its own `@State` has to write
+    /// that state *during* a view update, and SwiftUI is entitled to drop such a
+    /// write. It did, roughly one selection in five — the outline then stayed
+    /// invisible until the next pinch happened to invalidate the view.
+    private(set) var selectionContours: [[CGPoint]] = []
+
     /// How far the selection has been dragged so far, in canvas space. The ink
     /// itself is left alone until the drag ends and the renderer offsets the
     /// selected strokes by this instead — which keeps a drag free of array churn,
@@ -240,8 +250,19 @@ final class CanvasViewModel {
 
     func clearSelection() {
         selectedStrokeIDs.removeAll()
+        selectionContours = []
         hideSelectionMenu()
         cancelSelectionDrag()
+    }
+
+    /// Rebuilds the selection's frame from the ink it holds. Every path that
+    /// changes *which* strokes are selected, or moves them, has to end here — the
+    /// frame is otherwise left describing a selection that no longer exists.
+    private func retraceSelectionOutline() {
+        let polylines = selectedStrokes.map { $0.points.map(\.position) }
+        selectionContours = polylines.isEmpty
+            ? []
+            : SelectionRegion.contours(around: polylines, radius: selectionStandoff)
     }
 
     /// Whether a canvas point lands inside the selection's frame. It measures
@@ -514,6 +535,7 @@ final class CanvasViewModel {
         )
         // Captured once, here: the frame is canvas geometry from now on.
         selectionStandoff = SelectionStyle.standoff / max(canvasTransform.scale, .ulpOfOne)
+        retraceSelectionOutline()
     }
 
     // MARK: - Moving a selection
@@ -561,6 +583,11 @@ final class CanvasViewModel {
         redoStack.removeAll()
         for index in strokes.indices where selectedStrokeIDs.contains(strokes[index].id) {
             strokes[index].translate(by: offset)
+        }
+        // The ink moved rigidly, so the frame moves with it — tracing it again
+        // would rebuild a distance field to arrive at the same shape.
+        selectionContours = selectionContours.map { contour in
+            contour.map { $0 + offset }
         }
         recordEdit()
     }
@@ -630,6 +657,24 @@ final class CanvasViewModel {
         recordEdit()
     }
 
+    /// Files every selected stroke under one problem in a single undo step.
+    ///
+    /// The selection is kept — the ink is still there and the user may want to
+    /// move or re-file it again — but the menu closes, because the choice it was
+    /// offering has been made.
+    func reassignSelection(toProblemNode nodeID: UUID) {
+        guard hasSelection else { return }
+        let reassignedStrokeIDs = selectedStrokeIDs
+
+        undoStack.append(strokes)
+        redoStack.removeAll()
+        for index in strokes.indices where reassignedStrokeIDs.contains(strokes[index].id) {
+            strokes[index].problemNodeID = nodeID
+        }
+        hideSelectionMenu()
+        recordEdit()
+    }
+
     // MARK: - Undo / redo
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -656,6 +701,9 @@ final class CanvasViewModel {
         guard hasSelection else { return }
         let survivingIDs = Set(strokes.map(\.id))
         selectedStrokeIDs.formIntersection(survivingIDs)
+        // An undo can also have moved the surviving ink back, so the frame is
+        // retraced even when the selection itself came through unchanged.
+        retraceSelectionOutline()
     }
 
     // MARK: - Helpers

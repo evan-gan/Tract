@@ -55,6 +55,23 @@ struct LassoSelectionTests {
         #expect(viewModel.hasSelection == false)
     }
 
+    @Test("Circling the ink twice still selects it")
+    func doubleLapLoopSelects() {
+        // Hurrying, people go round more than once. Counted by the even-odd rule
+        // the second lap would cancel the first and select nothing.
+        let viewModel = canvasWithTwoLines()
+        lasso(viewModel, around: boxCorners + boxCorners)
+        #expect(viewModel.selectedStrokes.count == 1)
+    }
+
+    @Test("A loop that overshoots its own start still selects what it went round")
+    func selfCrossingLoopSelects() {
+        let viewModel = canvasWithTwoLines()
+        // Round the box, then past the start and back across the first edge.
+        lasso(viewModel, around: boxCorners + [CGPoint(x: -20, y: -20), CGPoint(x: 50, y: -20)])
+        #expect(viewModel.selectedStrokes.count == 1)
+    }
+
     @Test("The in-progress loop is cleared once the pencil lifts")
     func loopClearsAfterCommit() {
         let viewModel = canvasWithTwoLines()

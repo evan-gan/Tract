@@ -7,6 +7,18 @@ struct SelectionAction: Identifiable {
     let systemImage: String
     /// Destructive actions are tinted so a delete cannot be mistaken for a move.
     var isDestructive: Bool = false
+    /// Choices to pick between. Non-empty turns the entry into a menu; the
+    /// entry's own `perform` is then never called.
+    var choices: [SelectionActionChoice] = []
+    var perform: () -> Void = {}
+}
+
+/// One row inside a `SelectionAction`'s menu — a problem to file the selection
+/// under, say.
+struct SelectionActionChoice: Identifiable {
+    let id: UUID
+    let title: String
+    let isCurrent: Bool
     let perform: () -> Void
 }
 
@@ -87,17 +99,41 @@ private struct SelectionActionButton: View {
     let action: SelectionAction
 
     var body: some View {
-        Button(action: action.perform) {
-            Label(action.title, systemImage: action.systemImage)
-                .font(.subheadline.weight(.medium))
-                .labelStyle(.titleAndIcon)
-                .foregroundStyle(action.isDestructive ? AnyShapeStyle(AppTint.active)
-                                                      : AnyShapeStyle(.primary))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .contentShape(.rect(cornerRadius: 18))
+        Group {
+            if action.choices.isEmpty {
+                Button(action: action.perform) { label }
+            } else {
+                Menu {
+                    ForEach(action.choices) { choice in
+                        Button(action: choice.perform) {
+                            // A checkmark rather than a disabled row: the ink can
+                            // be a mix of tags, so "already there" is a hint, not
+                            // a reason to refuse the pick.
+                            if choice.isCurrent {
+                                Label(choice.title, systemImage: "checkmark")
+                            } else {
+                                Text(choice.title)
+                            }
+                        }
+                    }
+                } label: {
+                    label
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(action.title)
+        .accessibilityIdentifier("selectionAction-\(action.title)")
+    }
+
+    private var label: some View {
+        Label(action.title, systemImage: action.systemImage)
+            .font(.subheadline.weight(.medium))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(action.isDestructive ? AnyShapeStyle(AppTint.active)
+                                                  : AnyShapeStyle(.primary))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .contentShape(.rect(cornerRadius: 18))
     }
 }

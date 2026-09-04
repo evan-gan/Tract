@@ -22,7 +22,7 @@ final class CanvasZoomUITests: XCTestCase {
         // amount, so the cap is only reached by asking for far more than it.
         pinchRepeatedly(scale: 3, velocity: 3)
 
-        XCTAssertEqual(zoomPercent(), 500, "Zooming in should stop at the 500% cap.")
+        XCTAssertEqual(zoomPercent(), 400, "Zooming in should stop at the 400% cap.")
         attachScreenshot(named: "zoomedInCanvas")
     }
 

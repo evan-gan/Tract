@@ -125,7 +125,7 @@ final class CanvasUIView: UIView {
             // Before the pencil filter: a finger landing on the paper is just as
             // much a sign that the chrome should get out of the way.
             viewModel.noteCanvasTouch()
-            guard let touch = touches.first, touch.type == .pencil else { return }
+            guard let touch = pencilTouch(in: touches) else { return }
             // The nib is on the glass now, so there is nothing left to preview —
             // the dot has to go at once, not on the next SwiftUI pass.
             hoverDot.hide()
@@ -134,7 +134,7 @@ final class CanvasUIView: UIView {
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let viewModel, let touch = touches.first, touch.type == .pencil else { return }
+        guard let viewModel, let touch = pencilTouch(in: touches) else { return }
         // Consume coalesced touches to capture all 240 Hz Pencil Pro samples.
         let samples = event?.coalescedTouches(for: touch) ?? [touch]
         // Handed over as one batch, and without a `Task` hop: touch delivery is
@@ -146,7 +146,7 @@ final class CanvasUIView: UIView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let viewModel, let touch = touches.first, touch.type == .pencil else { return }
+        guard let viewModel, let touch = pencilTouch(in: touches) else { return }
         MainActor.assumeIsolated {
             viewModel.continueStroke(with: makeStrokePoint(from: touch))
             viewModel.endStroke()
@@ -154,8 +154,16 @@ final class CanvasUIView: UIView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let viewModel, touches.first?.type == .pencil else { return }
+        guard let viewModel, pencilTouch(in: touches) != nil else { return }
         MainActor.assumeIsolated { viewModel.cancelStroke() }
+    }
+
+    /// The pencil out of a touch set that may also carry fingers or a resting
+    /// palm. Taking `touches.first` instead would drop the whole event whenever
+    /// UIKit happened to put a finger at the front of the set — a hole in the
+    /// middle of a stroke, and a shortcut across the middle of a lasso loop.
+    private func pencilTouch(in touches: Set<UITouch>) -> UITouch? {
+        touches.first { $0.type == .pencil }
     }
 
     // MARK: - Pencil hover

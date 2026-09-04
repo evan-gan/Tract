@@ -62,7 +62,7 @@ Tract/
 │   ├── CanvasBackgroundView.swift # White paper + dot grid, both tracking the transform
 │   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, pan phase
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
-│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–500%, screen↔canvas conversion, visible rect
+│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–400%, screen↔canvas conversion, visible rect
 │
 ├── Toolbar/                      # Fixed top chrome (close, title, save dot, problem wheel, export)
 │   ├── TopBarView.swift          # The one top pill: back, title, save dot, problem tag, Export
@@ -94,11 +94,11 @@ Tract/
 │   ├── ZoomIndicatorView.swift   # "100%" readout, top-right. Tap → reset zoom.
 │   ├── SelectionStyle.swift      # Shared selection tokens: red, dash, standoff, softening
 │   ├── LassoPathView.swift       # The loop being traced, drawn closed and static
-│   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection, traced + cached
-│   └── SelectionActionMenuView.swift # Floating glass menu a tap on the selection opens (Delete)
+│   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection; draws the contours the view model traced
+│   └── SelectionActionMenuView.swift # Floating glass menu a tap on the selection opens (Reassign, Delete)
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
-│   ├── Support/                  # StrokeFixtures, TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
+│   ├── Support/                  # StrokeFixtures, SelectionFixtures (a canvas with ink already lassoed), TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
 │   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths + visible rect, pencil hover, path cache, sample thinning
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
@@ -216,6 +216,15 @@ closed and every stroke whose points *all* fall inside it
 deliberately excluded. Selecting is not an edit: it never touches the undo stack.
 The result is framed by `SelectionOutlineView`.
 
+`StrokeGeometry.polygon(_:contains:)` decides "inside" by **winding number, not the
+even-odd rule**, and that is what makes a *fast* lasso work. A hurried loop is not a
+simple polygon — it overshoots its own start, and often goes round the ink twice.
+Even-odd counts two laps as outside, so a fast circle round a page of work used to
+select nothing while the same circle drawn slowly selected everything. Winding
+counts the laps instead, and the two rules agree on every loop that does not cross
+itself, so nothing else moved. (`SelectionRegion`'s contours never self-cross, so
+its use of the same test is unaffected.)
+
 Once something is selected, the lasso's pencil gesture forks: a nib landing inside
 the frame drags the selection instead of starting a new loop
 (`CanvasViewModel.beginLassoOrSelectionDrag`). Landing anywhere else starts a fresh
@@ -247,10 +256,19 @@ Selection rules worth keeping:
   enclosure check is what keeps a small piece of ink standing on its own from being
   swallowed, since that is exactly what the split rule exists to show. Raise
   `enclosedPocketAreaLimit` to be more aggressive about tidying holes away.
-- The trace is **cached** in `SelectionOutlineView.contours` and rebuilt only when
-  `SelectionShapeIdentity` changes — which strokes, how many samples, where they
-  sit, and the standoff. Navigation is deliberately not in that list: tracing a
-  distance field on every frame of a pan or a pinch would be far too expensive.
+- **The trace lives in `CanvasViewModel.selectionContours`, not in the view.** It is
+  rebuilt by `retraceSelectionOutline()` on the paths that change *which* ink is
+  selected — `commitLassoSelection()`, `clearSelection()`, `pruneSelection()` after an
+  undo — and simply translated by the offset when a drag commits, since a rigid move
+  cannot change the shape. Navigation never re-traces: tracing a distance field on
+  every frame of a pan or a pinch would be far too expensive.
+
+  It used to be `@State` inside `SelectionOutlineView`, filled from
+  `.onChange(of: shapeIdentity, initial: true)`. **Do not put it back**: that writes
+  state *during* a view update, which SwiftUI is entitled to drop — and did, about
+  one selection in five, leaving no outline on screen until the next pinch happened
+  to invalidate the view (the tell: the frame appearing the instant you zoom). The
+  view is now handed the contours and only draws them.
 - **The standoff is fixed at the zoom the selection was made at**, not held at a
   constant physical distance. `CanvasViewModel.selectionStandoff` captures
   `SelectionStyle.standoff / scale` once, in `commitLassoSelection()`, and the
@@ -294,10 +312,21 @@ blank paper. Rules:
 ### The selection action menu
 
 Tapping a selection — with the nib or a finger — floats `SelectionActionMenuView`
-over it, offering what can be done with the ink it holds. Today that is **Delete**
-(`CanvasViewModel.deleteSelection()`: one undo step, then the selection is dropped
-because there is nothing left to frame). A second tap on the selection closes the
-menu again; a tap off it drops the selection, as it always did.
+over it, offering what can be done with the ink it holds:
+
+- **Reassign** (`CanvasViewModel.reassignSelection(toProblemNode:)`) — files every
+  selected stroke under one problem in a single undo step. The entry is a menu of
+  every node in the tree in outline order (1, 1.a, 1.a.i, 2 …), each labelled with
+  its *full* address so a part is never just "a" with nothing to say which problem
+  it belongs to; the tag the whole selection already carries is checkmarked. The
+  selection survives the pick — the ink is still there — but the menu closes,
+  because the choice it was offering has been made. The entry is left out entirely
+  while the tree is empty, since a menu with no rows is a dead end.
+- **Delete** (`CanvasViewModel.deleteSelection()`) — one undo step, then the
+  selection is dropped because there is nothing left to frame.
+
+A second tap on the selection closes the menu again; a tap off it drops the
+selection, as it always did.
 
 - **A tap and a drag must not be confused.** Both arrive through the same
   begin/update/end path, so `CanvasViewModel` tells them apart at the end of the
@@ -314,8 +343,10 @@ menu again; a tap off it drops the selection, as it always did.
   touch and clamps it inside the screen, so a selection tapped at the very top edge
   still gets a menu the user can reach.
 - **The menu renders whatever actions it is handed.**
-  `CanvasContainerView.selectionActions` is the list; adding an entry there is the
-  whole change.
+  `CanvasSelectionLayer.selectionActions` is the list; adding an entry there is the
+  whole change. A `SelectionAction` carrying `choices` renders as a menu of
+  `SelectionActionChoice` rows instead of a plain button — how Reassign lists the
+  problems — so a picker needs no new view either.
 
 
 ---
@@ -636,7 +667,9 @@ date and preview are correct the moment the canvas is dismissed.
 
 ```
 Apple Pencil → UIView.touchesBegan/Moved/Ended
-  → guard touch.type == .pencil
+  → pencilTouch(in:)  ← the pencil *out of the set*, never touches.first: a finger
+                        or resting palm at the front of the set would otherwise
+                        drop the whole event, holing the stroke or the lasso loop
   → coalescedTouches(for:)  ← captures all 240 Hz samples
   → StrokePoint (screen → canvas via CanvasTransform.toCanvas)
   → CanvasViewModel.beginStroke / continueStroke([StrokePoint]) / endStroke
@@ -742,7 +775,7 @@ a pan interrupted by a zoom cannot drift.
 
 ## Zoom limits
 
-`CanvasTransform.scale` clamps itself to `minimumScale` (10%) … `maximumScale` (500%)
+`CanvasTransform.scale` clamps itself to `minimumScale` (10%) … `maximumScale` (400%)
 in a `didSet`, so no caller can put the canvas somewhere the user cannot pinch back
 from — not the pinch handler, not a restored document, not a future zoom control.
 
@@ -941,7 +974,7 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change what the eraser hits | `StrokeGeometry.stroke(_:isTouchedBy:_:tipRadius:)`; the tip size is `CanvasViewModel.eraserTipScreenRadius` |
 | Change what the lasso selects | `StrokeGeometry.stroke(_:isEnclosedBy:)` |
 | Change the selection outline's look or standoff | `SelectionStyle.swift` |
-| Change how the selection outline is shaped | `SelectionRegion.swift` (the dilation and its tracing); `SelectionOutlineView.swift` for the curve smoothing and the re-trace cache |
+| Change how the selection outline is shaped | `SelectionRegion.swift` (the dilation and its tracing); `CanvasViewModel.retraceSelectionOutline()` for when it is rebuilt; `SelectionOutlineView.swift` for the curve smoothing and the march |
 | Change what counts as grabbing a selection | `CanvasViewModel.selectionContains(_:)` |
 | Change how a selection is moved | The "Moving a selection" methods in `CanvasViewModel.swift`; the gestures live in `CanvasUIView.swift` |
 | Add an action to the selection menu | `selectionActions` in `CanvasSelectionLayer.swift`; the menu itself renders whatever it is handed |

@@ -54,10 +54,10 @@ struct CanvasTransformTests {
         #expect(transform.scale == 2.5)
     }
 
-    @Test("The zoom range spans 10% to 500%")
-    func zoomRangeIsTenToFiveHundredPercent() {
+    @Test("The zoom range spans 10% to 400%")
+    func zoomRangeIsTenToFourHundredPercent() {
         #expect(CanvasTransform.minimumScale == 0.1)
-        #expect(CanvasTransform.maximumScale == 5.0)
+        #expect(CanvasTransform.maximumScale == 4.0)
     }
 
     @Test("Panning does not change how wide a stroke is drawn")

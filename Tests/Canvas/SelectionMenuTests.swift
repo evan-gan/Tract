@@ -7,35 +7,12 @@ import CoreGraphics
 @MainActor
 struct SelectionMenuTests {
 
-    private let boxCorners = [
-        CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0),
-        CGPoint(x: 100, y: 100), CGPoint(x: 0, y: 100),
-    ]
-
-    /// A canvas holding one short line inside the lassoed box, already selected.
-    /// `alsoDrawing` adds further lines first, so a test can check what a delete
-    /// leaves behind.
     private func canvasWithSelectedLine(alsoDrawing others: [(CGPoint, CGPoint)] = []) -> CanvasViewModel {
-        let viewModel = CanvasViewModel()
-        drawLine(viewModel, from: CGPoint(x: 20, y: 20), to: CGPoint(x: 60, y: 60))
-        for (start, end) in others {
-            drawLine(viewModel, from: start, to: end)
-        }
-
-        viewModel.selectTool(.lasso)
-        viewModel.beginStroke(with: StrokeFixtures.point(at: boxCorners[0]))
-        for corner in boxCorners.dropFirst() {
-            viewModel.continueStroke(with: StrokeFixtures.point(at: corner))
-        }
-        viewModel.endStroke()
-        return viewModel
+        SelectionFixtures.canvasWithSelectedLine(alsoDrawing: others)
     }
 
     private func drawLine(_ viewModel: CanvasViewModel, from start: CGPoint, to end: CGPoint) {
-        viewModel.selectTool(.pen)
-        viewModel.beginStroke(with: StrokeFixtures.point(at: start))
-        viewModel.continueStroke(with: StrokeFixtures.point(at: end))
-        viewModel.endStroke()
+        SelectionFixtures.drawLine(viewModel, from: start, to: end)
     }
 
     // MARK: - Opening and closing
