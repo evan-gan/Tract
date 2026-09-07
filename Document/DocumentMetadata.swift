@@ -13,7 +13,9 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     /// 3 added `StrokePoint.timestamp` for the same reason: the samples decode
     /// without it on an older build, which then saves the stroke back with its
     /// timing — the part the raw-data export exists for — stripped out.
-    static let currentSchemaVersion = 3
+    /// 4 added `folderID`: an older build would open a filed document and save
+    /// it back at the top level, silently emptying the user's folders.
+    static let currentSchemaVersion = 4
 
     var schemaVersion: Int
     let id: UUID
@@ -33,6 +35,12 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     /// Optional on purpose: the synthesised decoder reads it with
     /// `decodeIfPresent`, so documents written before tagging existed still load.
     var problemOutline: ProblemOutline?
+    /// The library folder this document is filed in; `nil` is the top level.
+    /// The folder itself lives in `folders.json` — see `DocumentFolder` for why
+    /// membership is stored on the document rather than as a directory nesting.
+    ///
+    /// Optional so documents written before folders existed still load.
+    var folderID: UUID?
 
     init(
         id: UUID = UUID(),
@@ -42,7 +50,8 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
         strokeCount: Int = 0,
         canvasOrigin: CGPoint = .zero,
         canvasScale: CGFloat = 1.0,
-        problemOutline: ProblemOutline? = nil
+        problemOutline: ProblemOutline? = nil,
+        folderID: UUID? = nil
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.id = id
@@ -53,5 +62,6 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
         self.canvasOrigin = canvasOrigin
         self.canvasScale = canvasScale
         self.problemOutline = problemOutline
+        self.folderID = folderID
     }
 }

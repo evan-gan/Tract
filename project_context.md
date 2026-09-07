@@ -7,7 +7,7 @@ Infinite canvas vector note-taking app for iPad. Every stroke stores full Apple 
 ```bash
 ./scripts/build.sh                    # compile / type-check, unsigned
 ./scripts/test.sh                     # unit + UI tests on an iPad simulator
-./scripts/screenshot.sh [light|dark] [sim] [canvas|library]   # → build/screenshots/*.png
+./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportmenu|problempicker]
 ./scripts/deploy-device.sh            # signed build installed on a connected iPad
 xcodegen generate                     # after editing project.yml
 ```
@@ -100,7 +100,7 @@ Tract/
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures, SelectionFixtures (a canvas with ink already lassoed), TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
 │   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths + visible rect, pencil hover, path cache, sample thinning
-│   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
+│   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails, folder tree + filing
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
 │   ├── Export/                   # Paper geometry, ink fitting, problem grouping, PDF output, raw JSON data export
@@ -144,14 +144,26 @@ Tract/
 │   ├── ProblemDropResolver.swift # Pure drop maths: gap, level, parent, insertion index
 │   └── InkColor.swift            # Named ink colours + the dock's quick palette (default ink: black)
 │
-├── Document/                     # Document model + persistence
-│   ├── DocumentMetadata.swift    # Card-level record: title, dates, stroke count, pan/zoom, schema version
+├── Document/                     # Document model + persistence + the library's folders
+│   ├── DocumentMetadata.swift    # Card-level record: title, dates, stroke count, pan/zoom, folderID, schema version
 │   ├── SplineDocument.swift      # A loaded document — metadata + strokes
-│   ├── DocumentFileStore.swift   # actor: the on-disk store (atomic writes, one folder per document)
-│   ├── DocumentLibrary.swift     # @Observable home-screen model — list, create, rename, delete
+│   ├── DocumentFolder.swift      # A library folder + `FolderIndex`, the shape of folders.json
+│   ├── FolderTree.swift          # Pure tree queries: children, path, descendants, which moves are legal
+│   ├── DocumentFileStore.swift   # actor: the on-disk store (atomic writes, one folder per document, one folders.json)
+│   ├── DocumentLibrary.swift     # @Observable home-screen model — folders + documents, create/rename/delete/file
 │   ├── DocumentEditorSession.swift # @Observable owner of the open document: load, autosave, flush
-│   ├── DocumentLibraryView.swift # Home screen — card grid + full-screen canvas cover
-│   ├── DocumentCard.swift        # One card: preview, title, last edited, rename/delete menu
+│   ├── DocumentLibraryView.swift # Home screen — navigation stack over folders + the shared prompts
+│   ├── LibraryFolderContentsView.swift # One folder, as grid or outline; the same view renders every level
+│   ├── LibraryUIState.swift      # @Observable transient screen state: prompt, deletion, open session, view mode, expansion
+│   ├── LibraryViewMode.swift     # Grid vs list, and the preference that remembers which
+│   ├── LibraryOutline.swift      # Pure: flattens the tree into indented rows for the expanded folders
+│   ├── LibraryListView.swift     # The outline — folders expand in place, previews kept
+│   ├── LibraryListRows.swift     # One folder row (chevron opens in place, row navigates) + one document row
+│   ├── LibraryItemReference.swift # What a library drag carries (document-or-folder + id), as Transferable
+│   ├── LibraryTile.swift         # Shared tile chrome + caption, so folders and documents match
+│   ├── DocumentCard.swift        # One card: preview, title, last edited, draggable, rename/delete menu
+│   ├── FolderCard.swift          # One folder tile: draggable, and a drop target for anything filed into it
+│   ├── LibraryBreadcrumbBar.swift # Back button + the path; every crumb is also a drop target
 │   ├── DocumentThumbnailView.swift # Lazily loads a card's saved preview PNG
 │   └── SampleLibrarySeeder.swift # DEBUG-only launch-argument fixture for library screenshots
 │
@@ -647,10 +659,12 @@ All floating controls use Liquid Glass (iOS 26). Rules that must hold when addin
 Documents live as plain files, one folder each, under Application Support:
 
 ```
-Application Support/Documents/<uuid>/
-    metadata.json     # title, createdAt, modifiedAt, strokeCount, canvasOrigin, canvasScale, schemaVersion
-    strokes.plist     # binary property list of [Stroke] — full pencil telemetry
-    thumbnail.png     # 400×300 preview rendered at the last save
+Application Support/Documents/
+    folders.json          # the library's whole folder tree, in one file
+    <uuid>/
+        metadata.json     # title, createdAt, modifiedAt, strokeCount, canvasOrigin, canvasScale, folderID, schemaVersion
+        strokes.plist     # binary property list of [Stroke] — full pencil telemetry
+        thumbnail.png     # 400×300 preview rendered at the last save
 ```
 
 `DocumentFileStore` (an actor) is the only thing that touches those files.
@@ -676,7 +690,93 @@ Rules that keep saving trustworthy — break any of these and data goes missing:
 When to bump `DocumentMetadata.currentSchemaVersion`: any change to what
 `metadata.json` or `strokes.plist` contain that an older build would misread.
 Version 2 added `problemOutline` — an older build would read the file, ignore the
-tree, and write the document back with every problem tag destroyed.
+tree, and write the document back with every problem tag destroyed. Version 4
+added `folderID` for the same reason: an older build would open a filed document
+and save it back at the top level, quietly emptying the user's folders.
+
+### Folders
+
+Library folders are **not** directories. The whole tree lives in one
+`folders.json` (`FolderIndex` → `[DocumentFolder]`, each with a `parentID`), and a
+document records its membership as a `folderID` on its own `metadata.json`.
+
+That inversion is the point:
+
+- **Filing is a one-line metadata write.** Dragging a document into a folder never
+  moves a directory full of pencil telemetry, so it cannot half-happen.
+- **Renaming or moving a folder touches one small file** and no documents at all.
+- **A document can never be stranded.** If `folders.json` is damaged or a folder
+  goes missing, `DocumentLibrary.adoptingOrphans` shows the document at the top
+  level (in memory only — the document's own file is left alone), rather than
+  leaving it filed somewhere unreachable.
+- **Deleting a folder cascades**, and documents are deleted *before* the folder
+  list is rewritten: dying in between leaves emptier folders, which the user can
+  see, instead of documents filed into a folder that no longer exists.
+
+`FolderTree` holds every question about nesting — children, path, descendants, and
+`canMove(folderID:into:)`, which is what stops a folder being dropped into itself
+or into its own subfolder. It is a pure value type over the flat array precisely
+so those rules are testable without a drag gesture (`Tests/Document/FolderTreeTests.swift`).
+
+`LibraryFolderContentsView` renders one folder's contents and is pushed onto a
+`NavigationStack` for each level, so nesting costs nothing: the top level is the
+same view with `folderID == nil`. Drag and drop is `.draggable` /
+`.dropDestination` over `LibraryItemReference`, a tiny `Transferable` carrying only
+"document or folder" plus an id — a drag must never cost a stroke decode. It
+travels as JSON because the app's Info.plist is generated and has nowhere to
+declare an exported UTType, so every drop handler treats an item list it cannot
+decode as "not ours".
+
+### The breadcrumb
+
+Inside a folder, `LibraryBreadcrumbBar` is a `.topBarLeading` toolbar item: a back
+button, and to the right of it the path (`‹ Documents / Homework / Week 1`),
+sharing the navigation bar's one row with the layout toggle and the add buttons.
+The title goes empty and inline at that point — the path *is* the title — and the
+stack's own back button is hidden (`.navigationBarBackButtonHidden`) so there is
+only one.
+
+Every crumb is a button *and* a drop target. That is the whole reason the path is
+spelled out rather than left as a title: dragging something out of a folder needs
+somewhere to drop it, and a crumb lets it go to any ancestor in one move. Tapping
+a crumb truncates `path` at that level, which works because the stack always
+mirrors the folder chain — you can only descend one level at a time.
+
+Two things a navigation bar does to a custom leading item, both of which bit:
+
+- **It gives the item almost no width and lets it compress.** Without
+  `.fixedSize(horizontal:)` the crumb names are squeezed to a few points wide.
+  `LibraryBreadcrumbLayout` is what keeps that width bounded — past three folders
+  it drops the middle and shows `Documents / … / C / D / E`, always keeping the
+  top level so there is always a way home.
+- **An `.accessibilityIdentifier` on a container is inherited by everything inside
+  it**, wiping out each child's own. That is why neither the bar nor a folder's
+  outline row carries one: with it, every element underneath reported the
+  container's identifier and no test could find the back button or the disclosure
+  chevron. Put identifiers on leaves only.
+
+### Grid and outline
+
+`LibraryUIState.viewMode` picks between the tile grid and `LibraryListView`, and is
+remembered across launches in `UserDefaults` (`LibraryViewMode`). In the outline,
+folders expand **in place**, so several hierarchies can be read at once without
+navigating; documents keep their preview, smaller, with the name beside it. The
+chevron and the row do different things on purpose — chevron opens in place, row
+navigates in — which is the split Finder's list view uses.
+
+Which rows that produces is `LibraryOutline.rows(tree:documents:in:expandedFolderIDs:)`,
+kept pure and separate from the view: "what is on screen when these two folders are
+expanded" is the part worth testing, and `List` renders whatever it is handed. Note
+that expansion state is stored in `LibraryUIState`, not the view, so drilling into a
+folder and coming back does not collapse everything.
+
+One trap worth knowing: the view mode persists between launches, so a UI test that
+switches to the outline changes what every later test and screenshot sees. The
+seeder cannot fix this — it runs from a `.task`, long after `LibraryUIState` has
+read the stored value — so tests pin the layout with a launch argument instead,
+`-libraryViewMode grid`, which `UserDefaults` reads ahead of anything stored.
+`./scripts/screenshot.sh light "" folder` and `... librarylist` capture the
+breadcrumb and the outline.
 
 ### What triggers a save
 
@@ -1180,6 +1280,14 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Wire up problem tagging in the UI | Set `Stroke.problemTag` to a `ProblemTag`; the export side already handles it — see "Problem tagging" below |
 | Change the document card's preview size or fit | `ThumbnailRenderer.swift` |
 | Change the document card's layout | `DocumentCard.swift` |
+| Change the folder tile's layout | `FolderCard.swift`; the chrome both cards share is `LibraryTile.swift` |
+| Change the library grid, its empty state or the toolbar buttons | `LibraryFolderContentsView.swift` |
+| Change the outline's rows, indent or preview size | `LibraryListRows.swift`; what rows exist is `LibraryOutline.swift` |
+| Change the breadcrumb path or its back button | `LibraryBreadcrumbBar.swift` |
+| Add a library layout beyond grid and list | `LibraryViewMode.swift`, then a case in `LibraryFolderContentsView.contents` |
+| Change what a library drag carries, or what accepts a drop | `LibraryItemReference.swift`; the drop handlers are `drop(_:into:)` in `LibraryFolderContentsView.swift` |
+| Change which folder moves are legal | `FolderTree.canMove(folderID:into:)` |
+| Change the rename / new-folder / delete prompts | `LibraryDialogs` in `DocumentLibraryView.swift`; the cases are `LibraryUIState.swift` |
 | Change the autosave delay | `autosaveDelay` in `DocumentEditorSession.swift` |
 | Change the on-disk format | `DocumentFileStore.swift`, and bump `DocumentMetadata.currentSchemaVersion` |
 | Change the glass chrome style | `View+GlassChrome.swift` |

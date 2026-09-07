@@ -46,8 +46,9 @@ simulator, sets its light/dark appearance, runs the capture test in
 `UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
 into `build/screenshots/<screen>-<appearance>.png` — read that file to see the change.
 
-Four screens are wired up: `canvas` (the default), `library` (the document grid),
-`exportmenu` (the Export control expanded, which the canvas shot cannot show
+Six screens are wired up: `canvas` (the default), `library` (the document grid),
+`librarylist` (the outline, with a folder expanded), `folder` (inside a folder,
+where the breadcrumb lives), `exportmenu` (the Export control expanded, which the canvas shot cannot show
 because the button is collapsed there), and `problempicker` (the problem wheel
 with a tree in it — a fresh canvas shows only dashes).
 
@@ -69,6 +70,8 @@ The library shot needs documents that already have ink in them, and XCUITest can
 draw — the canvas takes Apple Pencil touches only, and a simulated finger drag pans.
 So `testCaptureLibrary` launches with `-TractSeedSampleDocuments`, which makes
 `SampleLibrarySeeder` (DEBUG-only) replace the library with fixed sample drawings.
+It also seeds one folder ("Homework") with a document filed inside it, so the
+library shot shows both kinds of tile and drag-and-drop has something to aim at.
 
 `testCaptureProblemPicker` instead opens the wheel and taps its own rows to build
 a tree. The wheel is shut until it is tapped, so every UI test starts by tapping

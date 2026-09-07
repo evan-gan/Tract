@@ -4,7 +4,9 @@
 #
 #   ./scripts/screenshot.sh                          # canvas, both appearances
 #   ./scripts/screenshot.sh dark                     # canvas, just dark
-#   ./scripts/screenshot.sh both "" library          # document library
+#   ./scripts/screenshot.sh both "" library          # document library, as a grid
+#   ./scripts/screenshot.sh light "" librarylist     # document library, outline with a folder open
+#   ./scripts/screenshot.sh light "" folder          # inside a folder, breadcrumb showing
 #   ./scripts/screenshot.sh light "" exportmenu      # Export dropdown, open
 #   ./scripts/screenshot.sh light "" problempicker   # problem wheel, with a tree in it
 #   ./scripts/screenshot.sh both "iPad Air 13-inch (M3)"
@@ -34,9 +36,11 @@ SCREEN="${3:-canvas}"
 case "$SCREEN" in
   canvas)  TEST_METHOD=testCaptureCanvas ;;
   library) TEST_METHOD=testCaptureLibrary ;;
+  librarylist) TEST_METHOD=testCaptureLibraryList ;;
+  folder) TEST_METHOD=testCaptureFolder ;;
   exportmenu) TEST_METHOD=testCaptureExportMenu ;;
   problempicker) TEST_METHOD=testCaptureProblemPicker ;;
-  *)       fail "Unknown screen '${SCREEN}' — use canvas, library, exportmenu or problempicker." ;;
+  *)       fail "Unknown screen '${SCREEN}' — use canvas, library, librarylist, folder, exportmenu or problempicker." ;;
 esac
 
 SNAPSHOT_TEST="TractUITests/CanvasSnapshotUITests/$TEST_METHOD"

@@ -20,20 +20,29 @@ enum SampleLibrarySeeder {
             try? await store.deleteDocument(id: existing.id)
         }
 
-        for (title, strokes) in samples() {
-            var document = SplineDocument(metadata: DocumentMetadata(title: title), strokes: strokes)
+        // One folder, with one document filed inside it, so the library shot shows
+        // both kinds of tile and the UI tests have something to drag onto.
+        let sampleFolder = DocumentFolder(name: "Homework")
+        try? await store.saveFolders([sampleFolder])
+
+        for sample in samples(folderID: sampleFolder.id) {
+            var document = SplineDocument(
+                metadata: DocumentMetadata(title: sample.title, folderID: sample.folderID),
+                strokes: sample.strokes
+            )
             document.metadata.modifiedAt = .now
-            let thumbnail = ThumbnailRenderer.renderPNG(strokes: strokes)
+            let thumbnail = ThumbnailRenderer.renderPNG(strokes: sample.strokes)
             try? await store.save(document, thumbnail: thumbnail.map(ThumbnailUpdate.replace) ?? .unchanged)
         }
     }
 
-    private static func samples() -> [(title: String, strokes: [Stroke])] {
+    private static func samples(folderID: UUID) -> [(title: String, strokes: [Stroke], folderID: UUID?)] {
         [
             ("Wave study", [sineStroke(color: InkColor.black, phase: 0),
-                            sineStroke(color: InkColor.black, phase: .pi / 2)]),
-            ("Grid sketch", gridStrokes()),
-            ("Untitled", [])
+                            sineStroke(color: InkColor.black, phase: .pi / 2)], nil),
+            ("Grid sketch", gridStrokes(), nil),
+            ("Untitled", [], nil),
+            ("Filed away", gridStrokes(), folderID)
         ]
     }
 

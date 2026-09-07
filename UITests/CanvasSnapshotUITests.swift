@@ -31,16 +31,56 @@ final class CanvasSnapshotUITests: XCTestCase {
     /// The drawings are seeded by the app on launch rather than drawn here: the
     /// canvas takes Apple Pencil touches only, and XCUITest cannot produce one.
     func testCaptureLibrary() {
-        let app = XCUIApplication()
-        app.launchArguments.append("-TractSeedSampleDocuments")
-        app.launch()
+        _ = launchSeededLibrary(viewMode: "grid")
 
-        XCTAssertTrue(app.buttons["New document"].firstMatch.waitForExistence(timeout: 15),
-                      "The library should be on screen before the shot is taken.")
         // Previews are read off disk per card; give them a beat to appear.
         Thread.sleep(forTimeInterval: 2)
 
         attachScreenshot(named: "library")
+    }
+
+    /// Captures the inside of a folder, which is the only place the breadcrumb
+    /// appears — at the top level the navigation bar carries just the title.
+    func testCaptureFolder() {
+        let app = launchSeededLibrary(viewMode: "grid")
+
+        let folder = app.buttons["folderCard-Homework"].firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 15),
+                      "The seeded library should contain the Homework folder.")
+        folder.tap()
+
+        XCTAssertTrue(app.buttons["libraryBackButton"].firstMatch.waitForExistence(timeout: 15),
+                      "The breadcrumb should be on screen before the shot is taken.")
+        Thread.sleep(forTimeInterval: 2)
+
+        attachScreenshot(named: "folder")
+    }
+
+    /// Captures the library's outline with a folder open, which is the only way
+    /// to see nesting — the grid shows one level at a time.
+    func testCaptureLibraryList() {
+        let app = launchSeededLibrary(viewMode: "list")
+
+        let disclosure = app.buttons["folderDisclosure-Homework"].firstMatch
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 15),
+                      "The outline should be on screen before the shot is taken.")
+        disclosure.tap()
+        Thread.sleep(forTimeInterval: 2)
+
+        attachScreenshot(named: "librarylist")
+    }
+
+    /// The layout is a remembered preference, so the shot has to say which one it
+    /// wants; `UserDefaults` reads launch arguments before stored values.
+    private func launchSeededLibrary(viewMode: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments.append("-TractSeedSampleDocuments")
+        app.launchArguments += ["-libraryViewMode", viewMode]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["New document"].firstMatch.waitForExistence(timeout: 15),
+                      "The library should be on screen before the shot is taken.")
+        return app
     }
 
     /// Captures the Export control expanded, which is the only way to see the
