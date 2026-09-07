@@ -55,7 +55,7 @@ enum StrokeRasterizer {
             // The eraser and lasso lay down no ink, and a single sample has no
             // segment to draw — CanvasRenderer skips both, so exports must too.
             guard stroke.style.tool.isDrawingTool, stroke.points.count >= 2 else { continue }
-            cgContext.setStrokeColor(cgColor(from: stroke.style))
+            cgContext.setStrokeColor(strokeColor(from: stroke.style))
             cgContext.setLineWidth(stroke.style.lineWidth)
             cgContext.addPath(path(for: stroke, offset: offset))
             cgContext.strokePath()
@@ -66,8 +66,15 @@ enum StrokeRasterizer {
     /// `CanvasRenderer` uses on screen, so a raster of a drawing matches what
     /// the user was actually looking at.
     static func path(for stroke: Stroke, offset: CGPoint) -> CGPath {
+        path(through: stroke.points.map { $0.position - offset })
+    }
+
+    /// The same curve through bare coordinates, for consumers that carry their
+    /// own points rather than whole strokes — the worksheet layout thins its
+    /// samples before it ever draws them.
+    static func path(through points: [CGPoint]) -> CGPath {
         let path = CGMutablePath()
-        let points = stroke.points.map { $0.position - offset }
+        guard points.count >= 2 else { return path }
         path.move(to: points[0])
 
         for index in 1 ..< points.count {
@@ -83,7 +90,9 @@ enum StrokeRasterizer {
         return path
     }
 
-    private static func cgColor(from style: StrokeStyle) -> CGColor {
+    /// The colour a stroke paints in: its own colour with the style's opacity
+    /// already folded into the alpha.
+    static func strokeColor(from style: StrokeStyle) -> CGColor {
         CGColor(
             red: CGFloat(style.color.x),
             green: CGFloat(style.color.y),

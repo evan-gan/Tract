@@ -9,9 +9,6 @@ import UIKit
 struct PDFPageRenderer {
     let options: PDFExportOptions
     var paperColor: UIColor = .white
-    var labelColor: UIColor = .black
-    var noteColor: UIColor = UIColor(white: 0.35, alpha: 1)
-    var borderColor: UIColor = UIColor(white: 0.75, alpha: 1)
 
     /// The whole drawing scaled to fit inside one page's margins.
     func drawWholeDrawingPage(strokes: [Stroke], into context: UIGraphicsPDFRendererContext) {
@@ -20,64 +17,20 @@ struct PDFPageRenderer {
         drawInk(strokes, bounds: StrokeRasterizer.inkedBounds(of: strokes), in: options.contentRect, context: context)
     }
 
-    /// One page per `layout.cellsPerPage` tagged groups, each in its own labelled
-    /// cell, followed by a page of its own for anything that was never tagged.
-    func drawProblemTablePages(
-        groups: [ProblemGroup],
-        layout: ProblemTableLayout,
+    /// One sheet per laid-out worksheet page. The layout has already decided
+    /// what sits where; this only starts the pages and hands each one to
+    /// `WorksheetRenderer`.
+    func drawWorksheetPages(
+        _ sheets: [WorksheetSheet],
+        options worksheetOptions: WorksheetOptions,
         into context: UIGraphicsPDFRendererContext
     ) {
-        drawCellPages(for: groups.filter { $0.tag != nil }, layout: layout, into: context)
-
-        if let untagged = groups.first(where: { $0.tag == nil }) {
-            drawUntaggedPage(for: untagged, layout: layout, into: context)
-        }
-    }
-
-    private func drawCellPages(
-        for groups: [ProblemGroup],
-        layout: ProblemTableLayout,
-        into context: UIGraphicsPDFRendererContext
-    ) {
-        let cellRects = layout.cellRects(in: options.contentRect)
-
-        for pageGroups in groups.chunked(into: layout.cellsPerPage) {
+        let renderer = WorksheetRenderer(page: options.worksheetPage, options: worksheetOptions)
+        for sheet in sheets {
             context.beginPage()
             fillPaper(in: context)
-            for (group, cell) in zip(pageGroups, cellRects) {
-                drawCell(for: group, in: cell, layout: layout, context: context)
-            }
+            renderer.draw(sheet, in: context.cgContext)
         }
-    }
-
-    /// Work nobody filed, on the last sheet, under a note saying so.
-    private func drawUntaggedPage(
-        for group: ProblemGroup,
-        layout: ProblemTableLayout,
-        into context: UIGraphicsPDFRendererContext
-    ) {
-        context.beginPage()
-        fillPaper(in: context)
-
-        let content = options.contentRect
-        drawText(
-            group.label,
-            in: layout.untaggedHeadingRect(in: content),
-            font: .systemFont(ofSize: layout.untaggedHeadingFontSize, weight: .semibold),
-            color: labelColor
-        )
-        drawText(
-            layout.untaggedNote,
-            in: layout.untaggedNoteRect(in: content),
-            font: .systemFont(ofSize: layout.untaggedNoteFontSize, weight: .regular),
-            color: noteColor
-        )
-        drawInk(
-            group.strokes,
-            bounds: group.inkBounds,
-            in: layout.untaggedInkRect(in: content),
-            context: context
-        )
     }
 
     // MARK: - Page furniture
@@ -87,38 +40,8 @@ struct PDFPageRenderer {
         context.fill(options.pageRect)
     }
 
-    private func drawCell(
-        for group: ProblemGroup,
-        in cell: CGRect,
-        layout: ProblemTableLayout,
-        context: UIGraphicsPDFRendererContext
-    ) {
-        if layout.drawsCellBorders {
-            borderColor.setStroke()
-            let border = UIBezierPath(roundedRect: cell, cornerRadius: 6)
-            border.lineWidth = 0.5
-            border.stroke()
-        }
-        drawLabel(group.label, in: layout.labelRect(in: cell), fontSize: layout.labelFontSize)
-        drawInk(group.strokes, bounds: group.inkBounds, in: layout.inkRect(in: cell), context: context)
-    }
-
-    private func drawLabel(_ text: String, in rect: CGRect, fontSize: CGFloat) {
-        drawText(
-            text,
-            in: rect,
-            font: .systemFont(ofSize: fontSize, weight: .semibold),
-            color: labelColor
-        )
-    }
-
-    private func drawText(_ text: String, in rect: CGRect, font: UIFont, color: UIColor) {
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
-        (text as NSString).draw(in: rect, withAttributes: attributes)
-    }
-
     /// Places ink inside `target`, clipped to it so a wide drawing can never
-    /// bleed into the neighbouring cell or over the page margin.
+    /// bleed over the page margin.
     private func drawInk(
         _ strokes: [Stroke],
         bounds inkBounds: CGRect,
@@ -135,14 +58,5 @@ struct PDFPageRenderer {
         )
         StrokeRasterizer.draw(strokes, in: cgContext, offset: inkBounds.origin)
         cgContext.restoreGState()
-    }
-}
-
-private extension Array {
-    /// Splits into fixed-size batches, the last one short. Used to deal groups
-    /// out one page at a time.
-    func chunked(into size: Int) -> [[Element]] {
-        guard size > 0 else { return isEmpty ? [] : [self] }
-        return stride(from: 0, to: count, by: size).map { Array(self[$0 ..< Swift.min($0 + size, count)]) }
     }
 }

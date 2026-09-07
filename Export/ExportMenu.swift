@@ -21,10 +21,11 @@ struct ExportMenu: View {
     /// would copy the whole drawing on each frame while the user is drawing.
     let makeDocument: () -> SplineDocument
 
-    /// "Problems" is the same PDF exporter under its worksheet layout: one
-    /// labelled cell per tagged problem, six to a page. It is offered as its own
-    /// format rather than behind a second tap, because the choice is which
-    /// document you want, not a setting on a document you already asked for.
+    /// "Problems" is the same PDF exporter under its worksheet layout: every
+    /// problem badged with its number and nested against its neighbours to fill
+    /// the paper. It is offered as its own format rather than behind a second
+    /// tap, because the choice is which document you want, not a setting on a
+    /// document you already asked for.
     ///
     /// "JSON" is the raw capture — every pencil sample, tag and timing the app
     /// holds — and sits last because it is the only one that is not a picture of

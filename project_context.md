@@ -103,7 +103,8 @@ Tract/
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
-│   ├── Export/                   # Paper/grid geometry, ink fitting, problem grouping, PDF output, raw JSON data export
+│   ├── Export/                   # Paper geometry, ink fitting, problem grouping, PDF output, raw JSON data export
+│   │   └── Worksheet/            # Hulls, thinning, badges, packing, growth, separators, block building
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
 │   ├── ToolDockDragUITests.swift # The dock's drag/snap gesture
@@ -163,10 +164,25 @@ Tract/
 │   ├── ThumbnailRenderer.swift   # Strokes → the fixed-size card preview PNG
 │   ├── SVGExporter.swift         # Strokes → SVG paths with data-* AI attributes
 │   ├── PaperSize.swift           # Standard print paper sizes in PDF points + orientation
-│   ├── PDFExportOptions.swift    # Paper, margins, scale ceiling, layout + problem-table grid; the `problemSheet` preset
+│   ├── PDFExportOptions.swift    # Paper, margins, scale ceiling, layout choice; the `problemSheet` preset
 │   ├── ProblemGrouping.swift     # Strokes → ProblemGroups, keyed on Stroke.problemTag
-│   ├── PDFPageRenderer.swift     # Paints PDF pages: paper, cell borders, labels, fitted ink, the untagged last page
-│   ├── PDFExporter.swift         # ExportAdapter over the above; whole-drawing or problem table
+│   ├── PDFPageRenderer.swift     # Paints PDF pages: paper, fitted whole-drawing ink, worksheet sheets
+│   ├── PDFExporter.swift         # ExportAdapter over the above; whole-drawing or worksheet
+│   ├── Worksheet/                # The problem worksheet: one problem per badged shape, nested to fill the paper
+│   │   ├── WorksheetOptions.swift        # Clearance, thinning, scale floor/ceiling/cap, what is drawn + the page geometry
+│   │   ├── WorksheetPolyline.swift       # Ramer–Douglas–Peucker thinning (the low-poly pass)
+│   │   ├── WorksheetPolygon.swift        # Convex hull, dilate, overlap (SAT), containment, distance, area
+│   │   ├── WorksheetColumnProfile.swift  # A shape sliced into 3pt columns: how far its edges sit below its top
+│   │   ├── WorksheetBadge.swift          # The problem-number badge as geometry, reserved before anything is placed
+│   │   ├── WorksheetBlock.swift          # ProblemGroups → blocks: thinned strokes, painted box, tension hull
+│   │   ├── WorksheetPlacement.swift      # A block sized and positioned; hulls, ink transform, growth anchors
+│   │   ├── WorksheetNester.swift         # The packer (height map + column profiles) and the per-page refit
+│   │   ├── WorksheetScaleSearch.swift    # Fewest pages first, then the largest text that fits them
+│   │   ├── WorksheetRelaxer.swift        # Round-robin growth of individual problems into what is still free
+│   │   ├── WorksheetSeparators.swift     # The dashed lines dividing the sheet into a region per problem
+│   │   ├── WorksheetPalette.swift        # Badge, ring and separator colours (the ink is never recoloured)
+│   │   ├── WorksheetLayoutEngine.swift   # The pipeline: block → scale → nest → refit → grow
+│   │   └── WorksheetRenderer.swift       # Paints one sheet: separators, ink, badges
 │   ├── PNGExporter.swift         # UIGraphicsImageRenderer
 │   ├── DrawingDataSchema.swift   # The raw-data export's *published* JSON shape (versioned contract)
 │   ├── DrawingDataBuilder.swift  # SplineDocument → that shape: resolves tags, colours, per-sample timing
@@ -854,12 +870,74 @@ painted `lineWidth` wide about that line — so fitting the centrelines crops ha
 nib off the outermost mark, a flat edge that gets worse the further the drawing is
 scaled up. `inkedBounds` stands the box off by half the widest drawing stroke's
 width (a lasso loop is painted by nothing, so it cannot widen it). Every consumer
-that crops or fits goes through it: PDF pages and problem cells, PNG, SVG and
+that crops or fits goes through it: PDF pages and worksheet blocks, PNG, SVG and
 library thumbnails.
 
 `Tests/Export/PDFExporterTests.swift` guards the blank-page bug by rasterising
 the finished page through `PDFPageInspector` and asserting it has ink on it —
 page count and media box alone would have passed against the broken version.
+
+## The problem worksheet (`Export/Worksheet/`)
+
+The "Problems" export. Work scattered across an infinite canvas becomes a sheet a
+teacher can read: every problem badged with its number, packed against its
+neighbours, and the whole page divided by dashed separator lines. Landscape US
+Letter at a 36pt margin (`PDFExportOptions.problemSheet`).
+
+It replaced a fixed 2×3 grid of cells. A grid wastes most of the paper — every
+problem gets the same box whatever shape it is — and it fits each problem to its
+own cell, so the handwriting comes out at a different size in every cell and
+reads as several different hands. The worksheet does the opposite: **one scale
+for the whole run**, and the *shapes* do the fitting.
+
+The pipeline, in `WorksheetLayoutEngine.sheets`:
+
+1. **Block** (`WorksheetBlock`) — `ProblemGrouping` sorts strokes into problems;
+   each block thins its samples once (RDP at 0.35 canvas points) and keeps a
+   painted box and a **tension outline**: the convex hull of its ink, held off
+   the strokes by half the widest nib. Reading order is the group order, so 1a,
+   1b, 2a … with untagged last.
+2. **Reserve the badge** (`WorksheetBadge`) — the badge is folded into the shape
+   *before* anything is placed, which is why it can never land on a neighbour's
+   handwriting. It starts inside the hull's top-left corner and rises only until
+   it is clear: a hull around handwriting is nearly always cut away there, and
+   sitting every badge fully above its problem cost a whole extra page on the
+   sample worksheet. Its size is estimated from an upper bound on Helvetica-Bold
+   character width rather than measured, because the geometry has to exist before
+   there is a page to measure against.
+3. **Choose the scale** (`WorksheetScaleSearch`) — fewest pages first, then the
+   largest text that still fits that many pages, bisected against the page count
+   at the 0.8× readability floor.
+4. **Nest** (`WorksheetNester`) — the page is sliced into 3pt columns with a
+   running height map; each shape carries the same slicing of itself, so it is
+   dropped until *some* column touches rather than until its corner does. That is
+   what lets a wedge slide under a slanted neighbour. Only the newest page is
+   offered a problem, so the sheet never reads out of order.
+5. **Expand to fill** — coarse then fine. `WorksheetNester.refit` re-nests each
+   page's own problems at the largest scale that page allows (re-nesting, not
+   scaling up: at a bigger scale the shapes interlock differently).
+   `WorksheetRelaxer` then grows problems individually into the space *between*
+   them, round-robin in 1.04 steps so the free space is shared rather than eaten
+   by whichever problem comes first, trying five anchors and then bounded slides.
+
+Clearance is the 8pt padding baked into every outline — never gaps between rows —
+so two problems' ink is always at least 16pt apart. Separators
+(`WorksheetSeparators`) are the boundary between padded outlines, traced on a 6pt
+grid, straightened, then Chaikin-smoothed; straightening *before* smoothing is
+what turns the grid staircase into a line rather than a wobble.
+
+The handwriting is never recoloured. The only colour on the page is the badge
+ring, cycling red/blue/green by top-level problem number — three strongly
+separated hues beat eight subtle ones when the job is telling this problem's
+badge from the one beside it.
+
+The algorithm was prototyped in JS under `tmpLayoutDebugging/` (gitignored, local
+only); `LAYOUT_PIPELINE.md` there is the spec this port follows constant for
+constant, so a Swift page can be diffed against a JS render of the same export.
+`Tests/Export/Worksheet/` pins the invariants that matter: outlines never
+intersect, nothing crosses a margin, every problem is placed exactly once,
+reading order survives pagination, growth never shrinks anything or passes the
+cap, and a straight boundary comes out straight.
 
 ## Exporting the raw data (JSON)
 
@@ -1042,11 +1120,14 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Add a field to the raw JSON data export | `DrawingDataSchema.swift` for the shape, `DrawingDataBuilder.swift` for where the value comes from; adding a field does not bump `formatVersion`, changing or removing one does |
 | Capture a new per-sample pencil property | `StrokePoint.swift` (optional, so old documents still decode) → `CanvasUIView.makeStrokePoint` → `DrawingDataBuilder.exportedPoint` |
 | Change the PDF's paper size, orientation or margins | `PDFExportOptions.swift`; add a size to `PaperSize.standardSizes` |
-| Change the problem table's grid, labels or borders | `ProblemTableLayout` in `PDFExportOptions.swift`; drawing in `PDFPageRenderer.swift` |
-| Change how many problems land on a page, or how far their ink is scaled up | `PDFExportOptions.problemSheet` — `columns`/`rows` on its layout, `problemCellMaximumScale` for the fit |
-| Change how a problem's heading is written ("1a" vs "1.a") | `tagFormatter` on `ProblemTableLayout`; the notations themselves are `ProblemTagFormatter.compact` / `.standard` |
-| Change the untagged page's heading, note or layout | `untaggedLabel` / `untaggedNote` and the `untagged*Rect` helpers in `PDFExportOptions.swift`; `PDFPageRenderer.drawUntaggedPage` |
-| Change how strokes are bucketed into problems | `ProblemGrouping.swift` (reads `Stroke.problemTag`); `ProblemTableLayout.groupingDepth` picks the level |
+| Change the worksheet's clearance, text-size limits or what is drawn on it | `WorksheetOptions.swift`; the paper itself is `PDFExportOptions.problemSheet` |
+| Change how tightly problems pack, or how they flow onto pages | `WorksheetNester.swift` (column width, resting rule, the per-page refit) |
+| Change how far problems grow into free space | `WorksheetRelaxer.swift` (step, anchors, slides) and `growthCap` in `WorksheetOptions` |
+| Change the problem badge — size, colour, where it sits | `WorksheetBadge.swift` for the geometry, `WorksheetPalette.swift` for the colours, `WorksheetRenderer.drawBadge` for the paint |
+| Change the separator lines between problems | `WorksheetSeparators.swift` (grid step, straightening, smoothing); weight and dash in `WorksheetRenderer` |
+| Change how a problem's badge is written ("1a" vs "1.a") | The formatter passed in `WorksheetBlockBuilder` — `ProblemTagFormatter.compact` / `.standard` |
+| Change what happens to untagged work | `untaggedLabel` in `WorksheetOptions` (nil leaves it off the sheet) |
+| Change how strokes are bucketed into problems | `ProblemGrouping.swift` (reads `Stroke.problemNodeID` through the outline) |
 | Add a problem numbering notation (Greek, ①②③, …) | New `ProblemLabelStyle` value + register it in a `ProblemTagFormatter`; no stored-format change |
 | Change how a problem tag reads on the page | `ProblemTagFormatter.swift` (`levelSeparator`, fallbacks) |
 | Change how problems sort | `ProblemTag.<` — compares ordinals outermost level first |

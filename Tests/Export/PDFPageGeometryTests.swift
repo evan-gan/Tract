@@ -35,45 +35,22 @@ struct PDFPageGeometryTests {
     }
 }
 
-@Suite("Problem table grid")
-struct ProblemTableLayoutTests {
-    private let contentRect = CGRect(x: 0, y: 0, width: 400, height: 300)
+@Suite("Worksheet paper")
+struct WorksheetPageGeometryTests {
+    @Test("The problem sheet prints landscape at a half-inch margin")
+    func problemSheetPaper() {
+        let options = PDFExportOptions.problemSheet
 
-    @Test("A grid produces one cell per row-column pair")
-    func cellCountMatchesGrid() {
-        let layout = ProblemTableLayout(columns: 3, rows: 4)
-
-        #expect(layout.cellRects(in: contentRect).count == 12)
-        #expect(layout.cellsPerPage == 12)
+        #expect(options.pageRect.size == CGSize(width: 792, height: 612))
+        #expect(options.worksheetPage.contentRect == CGRect(x: 36, y: 36, width: 720, height: 540))
     }
 
-    @Test("Cells are laid out in reading order, left to right then top to bottom")
-    func cellsAreInReadingOrder() {
-        let layout = ProblemTableLayout(columns: 2, rows: 2, cellSpacing: 0)
-        let cells = layout.cellRects(in: contentRect)
+    @Test("The worksheet's content box is the page inside its margins")
+    func contentBoxRespectsMargins() {
+        let page = WorksheetPageGeometry(size: CGSize(width: 200, height: 100), margin: 10)
 
-        #expect(cells[0] == CGRect(x: 0, y: 0, width: 200, height: 150))
-        #expect(cells[1] == CGRect(x: 200, y: 0, width: 200, height: 150))
-        #expect(cells[2] == CGRect(x: 0, y: 150, width: 200, height: 150))
-    }
-
-    @Test("Spacing is shared between cells, never added outside the content area")
-    func spacingStaysInsideContentArea() {
-        let layout = ProblemTableLayout(columns: 2, rows: 1, cellSpacing: 20)
-        let cells = layout.cellRects(in: contentRect)
-
-        #expect(cells[0].minX == contentRect.minX)
-        #expect(cells[1].maxX == contentRect.maxX)
-        #expect(cells[1].minX - cells[0].maxX == 20)
-    }
-
-    @Test("A cell's ink area sits below its label and inside its padding")
-    func inkAreaClearsTheLabel() {
-        let layout = ProblemTableLayout(cellSpacing: 0, labelHeight: 18, cellPadding: 8)
-        let cell = CGRect(x: 0, y: 0, width: 200, height: 150)
-
-        #expect(layout.labelRect(in: cell) == CGRect(x: 8, y: 8, width: 184, height: 18))
-        #expect(layout.inkRect(in: cell) == CGRect(x: 8, y: 26, width: 184, height: 116))
+        #expect(page.pageRect == CGRect(x: 0, y: 0, width: 200, height: 100))
+        #expect(page.contentRect == CGRect(x: 10, y: 10, width: 180, height: 80))
     }
 }
 
