@@ -78,110 +78,120 @@ struct PDFExporterTests {
         }
     }
 
-    // MARK: - Problem table
+    // MARK: - The worksheet
 
-    @Test("Each tagged problem gets its own cell, and cells flow onto more pages")
-    func problemsFlowAcrossPages() throws {
-        // One cell per page makes the pagination arithmetic visible: four problems
-        // must produce four pages.
-        let layout = ProblemTableLayout(columns: 1, rows: 1, untaggedLabel: nil)
-        var options = PDFExportOptions()
-        options.layout = .problemTable(layout)
-
-        var builder = ProblemOutlineBuilder()
-        let strokes = (1 ... 4).map { index in
-            square(at: CGPoint(x: index * 500, y: 0), node: builder.node([index]))
-        }
-        let data = try PDFExporter(options: options)
-            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
-
-        #expect(try PDFPageInspector.document(from: data).pageCount == 4)
-    }
-
-    @Test("Six problems fit one 2x3 page")
-    func aFullGridFitsOnOnePage() throws {
-        var options = PDFExportOptions()
-        options.layout = .problemTable(ProblemTableLayout(columns: 2, rows: 3, untaggedLabel: nil))
-
-        var builder = ProblemOutlineBuilder()
-        let strokes = (1 ... 6).map { index in
-            square(at: CGPoint(x: index * 500, y: 0), node: builder.node([index]))
-        }
-        let data = try PDFExporter(options: options)
-            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
-
-        #expect(try PDFPageInspector.document(from: data).pageCount == 1)
-    }
-
-    @Test("Every problem's label is printed on the sheet")
-    func problemLabelsArePrinted() throws {
-        var options = PDFExportOptions()
-        options.layout = .problemTable(ProblemTableLayout(untaggedLabel: nil))
-
+    @Test("Every problem's number is badged on the sheet, as it is written on a worksheet")
+    func problemBadgesArePrinted() throws {
         var builder = ProblemOutlineBuilder()
         let strokes = [
             square(at: .zero, node: builder.node([1, 1])),
             square(at: CGPoint(x: 900, y: 0), node: builder.node([1, 2, 4]))
         ]
-        let data = try PDFExporter(options: options)
+        let data = try PDFExporter(options: taggedOnlySheet)
             .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
         let text = try #require(PDFPageInspector.page(0, of: data).string)
 
-        #expect(text.contains("1.a"))
-        #expect(text.contains("1.b.IV"))
+        #expect(text.contains("1a"))
+        #expect(text.contains("1bIV"))
     }
 
     @Test("Ink from problems drawn far apart is gathered onto one page")
     func distantProblemsAreGatheredTogether() throws {
-        var options = PDFExportOptions()
-        // Ink written small on a big canvas has to grow to fill its cell.
-        options.maximumScale = 20
-        options.layout = .problemTable(ProblemTableLayout(columns: 2, rows: 1, untaggedLabel: nil))
-
         var builder = ProblemOutlineBuilder()
         let strokes = [
-            square(at: .zero, side: 60, node: builder.node([1])),
-            square(at: CGPoint(x: 20_000, y: 12_000), side: 60, node: builder.node([2]))
+            square(at: .zero, side: 120, node: builder.node([1])),
+            square(at: CGPoint(x: 20_000, y: 12_000), side: 120, node: builder.node([2]))
         ]
-        let data = try PDFExporter(options: options)
-            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
-
-        let coverage = try PDFPageInspector.inkCoverage(of: PDFPageInspector.page(0, of: data))
-
-        // Two filled cells plus their borders; a page that lost one would be far sparser.
-        #expect(coverage > 0.01)
-    }
-
-    @Test("Grouping by depth puts a problem's parts in one cell instead of several")
-    func groupingDepthCollapsesParts() throws {
-        var layout = ProblemTableLayout(columns: 1, rows: 1, untaggedLabel: nil)
-        layout.groupingDepth = 1
-        var options = PDFExportOptions()
-        options.layout = .problemTable(layout)
-
-        // Three parts of one problem: one cell at depth 1, so one page.
-        var builder = ProblemOutlineBuilder()
-        let strokes = (1 ... 3).map { part in
-            square(at: CGPoint(x: part * 500, y: 0), node: builder.node([1, part]))
-        }
-        let data = try PDFExporter(options: options)
+        let data = try PDFExporter(options: taggedOnlySheet)
             .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
 
         #expect(try PDFPageInspector.document(from: data).pageCount == 1)
-        #expect(try #require(PDFPageInspector.page(0, of: data).string).contains("1"))
+        // Two whole problems plus their badges; a page that lost one would be
+        // half as marked.
+        #expect(try PDFPageInspector.inkCoverage(of: PDFPageInspector.page(0, of: data)) > 0.01)
     }
 
-    @Test("Dropping untagged work from a table of nothing but untagged work is an error")
-    func tableWithNothingTaggedThrows() {
-        var options = PDFExportOptions()
-        options.layout = .problemTable(ProblemTableLayout(untaggedLabel: nil))
+    @Test("More problems than one sheet holds flow onto further sheets")
+    func problemsFlowOntoMorePages() throws {
+        var builder = ProblemOutlineBuilder()
+        let strokes = (1 ... 12).map { index in
+            square(at: CGPoint(x: index * 500, y: 0), node: builder.node([index]))
+        }
+        let data = try PDFExporter(options: taggedOnlySheet)
+            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
 
+        #expect(try PDFPageInspector.document(from: data).pageCount > 1)
+    }
+
+    // MARK: - Untagged work
+
+    @Test("Untagged work is still printed, under a heading that says so")
+    func untaggedWorkIsPrinted() throws {
+        var builder = ProblemOutlineBuilder()
+        let strokes = [
+            square(at: .zero, node: builder.node([1])),
+            square(at: CGPoint(x: 500, y: 0))
+        ]
+
+        let data = try PDFExporter(options: .problemSheet)
+            .export(document: document(with: strokes, outline: builder.outline), viewport: nil)
+        let text = try #require(PDFPageInspector.page(0, of: data).string)
+
+        #expect(text.contains("untagged"))
+    }
+
+    @Test("A document with nothing tagged is still exported")
+    func nothingTaggedStillProducesASheet() throws {
+        let data = try PDFExporter(options: .problemSheet)
+            .export(document: document(with: [square()]), viewport: nil)
+
+        #expect(try PDFPageInspector.document(from: data).pageCount == 1)
+        #expect(try PDFPageInspector.inkCoverage(of: PDFPageInspector.page(0, of: data)) > 0)
+    }
+
+    @Test("Dropping untagged work from a sheet of nothing but untagged work is an error")
+    func sheetWithNothingTaggedThrows() {
         #expect(throws: ExportError.self) {
-            try PDFExporter(options: options).export(document: document(with: [square()]), viewport: nil)
+            try PDFExporter(options: taggedOnlySheet).export(document: document(with: [square()]), viewport: nil)
         }
     }
 
+    // MARK: - Filling the paper
+
+    @Test("The worksheet grows small work rather than leaving the sheet empty")
+    func worksheetEnlargesSmallWork() throws {
+        var builder = ProblemOutlineBuilder()
+        let strokes = [square(at: .zero, side: 40, node: builder.node([1]))]
+        let tinyDocument = document(with: strokes, outline: builder.outline)
+
+        var unscaledOptions = PDFExportOptions.problemSheet
+        // The readability floor and the growth cap both pinned to 1: ink at its
+        // canvas size, which is what "no fitting at all" looks like.
+        unscaledOptions.layout = .worksheet(
+            WorksheetOptions(minimumScale: 1, maximumScale: 1, growthCap: 1)
+        )
+
+        let fitted = try PDFPageInspector.inkCoverage(
+            of: PDFPageInspector.page(0, of: PDFExporter(options: .problemSheet)
+                .export(document: tinyDocument, viewport: nil))
+        )
+        let unscaled = try PDFPageInspector.inkCoverage(
+            of: PDFPageInspector.page(0, of: PDFExporter(options: unscaledOptions)
+                .export(document: tinyDocument, viewport: nil))
+        )
+
+        #expect(fitted > unscaled)
+    }
+
     // MARK: - Fixtures
+
+    /// The shipping worksheet with untagged work left off, so a test can count
+    /// pages without an untagged block joining in.
+    private var taggedOnlySheet: PDFExportOptions {
+        var options = PDFExportOptions.problemSheet
+        options.layout = .worksheet(WorksheetOptions(untaggedLabel: nil))
+        return options
+    }
 
     private func document(
         with strokes: [Stroke],

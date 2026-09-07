@@ -18,6 +18,19 @@ struct StrokePoint: Codable, Sendable {
     /// so we can patch estimated force/azimuth with their final values.
     var estimationUpdateIndex: Int?
 
+    /// When UIKit says this sample happened, in `UITouch.timestamp`'s own base —
+    /// seconds since the device booted, *not* wall clock. Only differences within
+    /// one drawing session mean anything, which is exactly what the export turns
+    /// it into: how long after the stroke started this sample landed.
+    ///
+    /// Kept because the stroke's start/end alone cannot say how fast the pen was
+    /// moving at any point, and speed is most of what separates one handwritten
+    /// shape from another.
+    ///
+    /// Optional so documents written before it existed — and the fixtures that
+    /// build strokes out of bare coordinates — still decode.
+    var timestamp: TimeInterval?
+
     /// A copy of this sample at a new position. Every other field — the full
     /// pencil telemetry — is deliberately carried over: moving a mark across the
     /// canvas does not change how it was drawn.
@@ -29,7 +42,8 @@ struct StrokePoint: Codable, Sendable {
             altitude: altitude,
             rollAngle: rollAngle,
             estimatedPropertiesMask: estimatedPropertiesMask,
-            estimationUpdateIndex: estimationUpdateIndex
+            estimationUpdateIndex: estimationUpdateIndex,
+            timestamp: timestamp
         )
     }
 

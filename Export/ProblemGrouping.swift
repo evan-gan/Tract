@@ -9,7 +9,8 @@ struct ProblemGroup: Identifiable, Sendable {
     let label: String
     /// In the order they were drawn, so the group paints exactly as it did on canvas.
     let strokes: [Stroke]
-    /// Canvas-space box containing the group's ink.
+    /// Canvas-space box containing the group's painted ink, nib width included —
+    /// fitting a cell to the bare centrelines would clip the outermost mark in half.
     let inkBounds: CGRect
 
     var id: String { label }
@@ -88,7 +89,7 @@ enum ProblemGrouping {
             tag: tag,
             label: label,
             strokes: strokes,
-            inkBounds: StrokeRasterizer.unionBounds(of: strokes)
+            inkBounds: StrokeRasterizer.inkedBounds(of: strokes)
         )
     }
 }

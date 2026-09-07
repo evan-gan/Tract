@@ -18,7 +18,7 @@ enum ThumbnailRenderer {
 
     /// - Returns: PNG data, or nil when there is no ink to preview.
     static func renderPNG(strokes: [Stroke], paperColor: UIColor = .white) -> Data? {
-        let inkBounds = StrokeRasterizer.unionBounds(of: strokes.filter(\.style.tool.isDrawingTool))
+        let inkBounds = StrokeRasterizer.inkedBounds(of: strokes.filter(\.style.tool.isDrawingTool))
         guard !inkBounds.isNull, !strokes.isEmpty else { return nil }
 
         let format = UIGraphicsImageRendererFormat.preferred()

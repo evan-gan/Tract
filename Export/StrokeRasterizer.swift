@@ -10,6 +10,27 @@ enum StrokeRasterizer {
         strokes.reduce(CGRect.null) { $0.union($1.canvasBounds) }
     }
 
+    /// The smallest rect containing the ink as it is actually *painted*, in
+    /// canvas space. `.null` when there is nothing to bound.
+    ///
+    /// `unionBounds` traces the centreline the samples describe, but a stroke is
+    /// drawn `lineWidth` wide about that line and capped round at its ends, so
+    /// half a nib always sits outside it. Cropping or fitting to the centreline
+    /// shaves that half off — a flat edge down the outermost mark, and the more
+    /// the drawing is scaled up to fill its box the more obvious it gets.
+    static func inkedBounds(of strokes: [Stroke]) -> CGRect {
+        let centrelineBounds = unionBounds(of: strokes)
+        guard !centrelineBounds.isNull else { return centrelineBounds }
+
+        // The widest nib in the set: any narrower stroke is covered by it, and
+        // per-stroke padding would need per-stroke bounds to be worth anything.
+        let widestNib = strokes
+            .filter(\.style.tool.isDrawingTool)
+            .map(\.style.lineWidth)
+            .max() ?? 0
+        return centrelineBounds.insetBy(dx: -widestNib / 2, dy: -widestNib / 2)
+    }
+
     static func strokes(_ strokes: [Stroke], intersecting viewport: CGRect?) -> [Stroke] {
         guard let viewport else { return strokes }
         return strokes.filter { $0.canvasBounds.intersects(viewport) }
@@ -34,7 +55,7 @@ enum StrokeRasterizer {
             // The eraser and lasso lay down no ink, and a single sample has no
             // segment to draw — CanvasRenderer skips both, so exports must too.
             guard stroke.style.tool.isDrawingTool, stroke.points.count >= 2 else { continue }
-            cgContext.setStrokeColor(cgColor(from: stroke.style))
+            cgContext.setStrokeColor(strokeColor(from: stroke.style))
             cgContext.setLineWidth(stroke.style.lineWidth)
             cgContext.addPath(path(for: stroke, offset: offset))
             cgContext.strokePath()
@@ -45,8 +66,15 @@ enum StrokeRasterizer {
     /// `CanvasRenderer` uses on screen, so a raster of a drawing matches what
     /// the user was actually looking at.
     static func path(for stroke: Stroke, offset: CGPoint) -> CGPath {
+        path(through: stroke.points.map { $0.position - offset })
+    }
+
+    /// The same curve through bare coordinates, for consumers that carry their
+    /// own points rather than whole strokes — the worksheet layout thins its
+    /// samples before it ever draws them.
+    static func path(through points: [CGPoint]) -> CGPath {
         let path = CGMutablePath()
-        let points = stroke.points.map { $0.position - offset }
+        guard points.count >= 2 else { return path }
         path.move(to: points[0])
 
         for index in 1 ..< points.count {
@@ -62,7 +90,9 @@ enum StrokeRasterizer {
         return path
     }
 
-    private static func cgColor(from style: StrokeStyle) -> CGColor {
+    /// The colour a stroke paints in: its own colour with the style's opacity
+    /// already folded into the alpha.
+    static func strokeColor(from style: StrokeStyle) -> CGColor {
         CGColor(
             red: CGFloat(style.color.x),
             green: CGFloat(style.color.y),

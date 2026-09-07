@@ -5,16 +5,25 @@ import UIKit
 /// Two layouts, chosen through `PDFExportOptions`:
 ///
 /// - `.wholeDrawing` — the drawing scaled to fit one page inside its margins.
-/// - `.problemTable` — strokes grouped by the problem each one is tagged with,
-///   resolved through the document's `ProblemOutline`, one labelled cell
-///   per problem, flowing onto extra pages as needed. This is what turns work
-///   scattered across an infinite canvas into a sheet a teacher can read.
+/// - `.worksheet` — strokes grouped by the problem each one is tagged with,
+///   resolved through the document's `ProblemOutline`, each problem nested
+///   against its neighbours' outlines and badged with its number. This is what
+///   turns work scattered across an infinite canvas into a sheet a teacher can
+///   read. `Export/Worksheet/` holds the layout itself.
 struct PDFExporter: ExportAdapter {
     let fileExtension = "pdf"
     let mimeType = "application/pdf"
-    let displayName = "PDF"
 
     var options = PDFExportOptions()
+
+    /// The two layouts are two different things to a user — a picture of the
+    /// drawing, or a worksheet — so they are named apart in the export control
+    /// even though both write a PDF.
+    var displayName: String { options.layout.isWorksheet ? "Problems" : "PDF" }
+
+    /// Both layouts would otherwise share one file name, and a share sheet full
+    /// of identically named PDFs is impossible to tell apart.
+    var fileNameSuffix: String { options.layout.isWorksheet ? " problems" : "" }
 
     func export(document: SplineDocument, viewport: CGRect?) throws -> Data {
         let strokes = StrokeRasterizer.inkStrokes(document.strokes, intersecting: viewport)
@@ -27,19 +36,18 @@ struct PDFExporter: ExportAdapter {
         case .wholeDrawing:
             return renderer.pdfData { pageRenderer.drawWholeDrawingPage(strokes: strokes, into: $0) }
 
-        case .problemTable(let tableLayout):
-            let groups = ProblemGrouping.groups(
-                from: strokes,
-                outline: document.problemOutline,
-                depth: tableLayout.groupingDepth,
-                untaggedLabel: tableLayout.untaggedLabel,
-                formatter: tableLayout.tagFormatter
+        case .worksheet(let worksheetOptions):
+            let sheets = WorksheetLayoutEngine.sheets(
+                for: document,
+                viewport: viewport,
+                page: options.worksheetPage,
+                options: worksheetOptions
             )
             // Every stroke can be excluded here even though the document has ink:
             // an untaggedLabel of nil drops work that was never tagged.
-            guard !groups.isEmpty else { throw ExportError.noStrokes }
+            guard !sheets.isEmpty else { throw ExportError.noStrokes }
             return renderer.pdfData {
-                pageRenderer.drawProblemTablePages(groups: groups, layout: tableLayout, into: $0)
+                pageRenderer.drawWorksheetPages(sheets, options: worksheetOptions, into: $0)
             }
         }
     }

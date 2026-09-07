@@ -12,6 +12,13 @@ protocol ExportAdapter {
     var fileExtension: String { get }
     var mimeType: String { get }
     var displayName: String { get }
+    /// Appended to the document title when naming the file, for formats that a
+    /// document can produce more than one of. Empty for most exporters.
+    var fileNameSuffix: String { get }
+}
+
+extension ExportAdapter {
+    var fileNameSuffix: String { "" }
 }
 
 enum ExportError: LocalizedError {
