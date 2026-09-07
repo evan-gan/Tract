@@ -10,7 +10,10 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     /// dropping the fields this build does not understand.
     /// 2 added `problemOutline`: an older build would read the file, ignore the
     /// tree, and write the document back with every problem tag destroyed.
-    static let currentSchemaVersion = 2
+    /// 3 added `StrokePoint.timestamp` for the same reason: the samples decode
+    /// without it on an older build, which then saves the stroke back with its
+    /// timing — the part the raw-data export exists for — stripped out.
+    static let currentSchemaVersion = 3
 
     var schemaVersion: Int
     let id: UUID

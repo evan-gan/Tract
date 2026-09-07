@@ -56,6 +56,26 @@ final class ExportShareSheetUITests: XCTestCase {
                       + "all-untagged document still produces its one explanatory page.")
     }
 
+    /// The raw-data export shares a file rather than a picture, and it is the one
+    /// format whose whole point is leaving the app — so the path out is tested.
+    func testJSONDataExportIsOfferedAsItsOwnFormat() throws {
+        let app = launchWithSampleDocuments()
+        openSampleDocument(in: app)
+
+        let exportButton = app.buttons["Export"].firstMatch
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
+                      "The canvas should offer an Export button.")
+        exportButton.tap()
+
+        let jsonOption = app.buttons["Export as JSON"].firstMatch
+        XCTAssertTrue(jsonOption.waitForExistence(timeout: 10),
+                      "The expanded control should offer the raw JSON data export.")
+        jsonOption.tap()
+
+        XCTAssertTrue(waitForShareSheet(in: app),
+                      "Exporting the raw data should reach the share sheet.")
+    }
+
     // MARK: - Steps
 
     private func launchWithSampleDocuments() -> XCUIApplication {

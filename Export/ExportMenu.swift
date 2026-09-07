@@ -25,11 +25,16 @@ struct ExportMenu: View {
     /// labelled cell per tagged problem, six to a page. It is offered as its own
     /// format rather than behind a second tap, because the choice is which
     /// document you want, not a setting on a document you already asked for.
+    ///
+    /// "JSON" is the raw capture — every pencil sample, tag and timing the app
+    /// holds — and sits last because it is the only one that is not a picture of
+    /// the drawing.
     private let adapters: [any ExportAdapter] = [
         SVGExporter(),
         PDFExporter(),
         PDFExporter(options: .problemSheet),
-        PNGExporter()
+        PNGExporter(),
+        JSONExporter()
     ]
 
     /// Both presentations are driven by an optional value rather than by a

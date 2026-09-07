@@ -217,7 +217,8 @@ final class CanvasUIView: UIView {
             altitude: touch.altitudeAngle,
             rollAngle: touch.rollAngle,
             estimatedPropertiesMask: touch.estimatedPropertiesExpectingUpdates.rawValue,
-            estimationUpdateIndex: updateIndex
+            estimationUpdateIndex: updateIndex,
+            timestamp: touch.timestamp
         )
     }
 

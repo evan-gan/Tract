@@ -103,12 +103,13 @@ Tract/
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
-│   ├── Export/                   # Paper/grid geometry, ink fitting, problem grouping, PDF output
+│   ├── Export/                   # Paper/grid geometry, ink fitting, problem grouping, PDF output, raw JSON data export
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
 │   ├── ToolDockDragUITests.swift # The dock's drag/snap gesture
 │   ├── CanvasZoomUITests.swift   # Pinch limits, read back off the zoom pill
 │   ├── ProblemPickerUITests.swift # Wheel rows tapped, the dash, flicking a column
+│   ├── ExportShareSheetUITests.swift # Each format in the export control reaches a share sheet
 │   └── CanvasSnapshotUITests.swift # Screenshot capture driven by scripts/screenshot.sh
 │
 ├── ProblemPicker/                # Tagging control in the top chrome (the wheel)
@@ -127,7 +128,7 @@ Tract/
 │   └── ProblemPickerMetrics.swift # Every size and threshold the control is built from
 │
 ├── Stroke/                       # Pure data types — no UIKit/SwiftUI imports
-│   ├── StrokePoint.swift         # Single pencil sample (position, force, azimuth, altitude, roll)
+│   ├── StrokePoint.swift         # Single pencil sample (position, force, azimuth, altitude, roll, event timestamp)
 │   ├── Stroke.swift              # Full pen-down→pen-up gesture
 │   ├── StrokeGeometry.swift      # Segment intersection, point-in-polygon, eraser/lasso hit tests
 │   ├── SelectionRegion.swift     # Dilates the selected ink into the contours the frame is drawn from
@@ -155,7 +156,7 @@ Tract/
 │
 ├── Export/
 │   ├── ExportAdapter.swift       # Protocol all exporters conform to
-│   ├── ExportMenu.swift          # Filled capsule on the bar; expands in place into SVG / PDF / Problems / PNG → share sheet
+│   ├── ExportMenu.swift          # Filled capsule on the bar; expands in place into SVG / PDF / Problems / PNG / JSON → share sheet
 │   ├── ExportFileNaming.swift    # Document title → safe file name
 │   ├── StrokeRasterizer.swift    # Shared strokes → CGContext drawing (PNG, PDF, thumbnails); `inkedBounds` is the nib-padded crop box
 │   ├── InkFitTransform.swift     # Shared "scale ink to fit this box and centre it" maths
@@ -166,7 +167,10 @@ Tract/
 │   ├── ProblemGrouping.swift     # Strokes → ProblemGroups, keyed on Stroke.problemTag
 │   ├── PDFPageRenderer.swift     # Paints PDF pages: paper, cell borders, labels, fitted ink, the untagged last page
 │   ├── PDFExporter.swift         # ExportAdapter over the above; whole-drawing or problem table
-│   └── PNGExporter.swift         # UIGraphicsImageRenderer
+│   ├── PNGExporter.swift         # UIGraphicsImageRenderer
+│   ├── DrawingDataSchema.swift   # The raw-data export's *published* JSON shape (versioned contract)
+│   ├── DrawingDataBuilder.swift  # SplineDocument → that shape: resolves tags, colours, per-sample timing
+│   └── JSONExporter.swift        # ExportAdapter over the builder — every sample, tag and timing as JSON
 │
 ├── Utilities/
 │   ├── CGPoint+Math.swift        # +, -, *, distance, midpoint
@@ -857,6 +861,46 @@ library thumbnails.
 the finished page through `PDFPageInspector` and asserting it has ink on it —
 page count and media box alone would have passed against the broken version.
 
+## Exporting the raw data (JSON)
+
+Every other exporter answers *what does this drawing look like* — it rasterises,
+fits to paper, and drops what paints nothing (a lasso loop, a tap with no segment
+to draw). The JSON export answers *what happened*, and throws nothing away. It
+exists so a real drawing can leave the iPad and be prototyped against somewhere
+faster: layout algorithms, handwriting recognition, stroke replay.
+
+Three files, one each for the contract, the mapping and the file:
+
+- `DrawingDataSchema.swift` — the `DrawingDataExport` shape and its nested types.
+  This is a **published contract**, not an encoding of `Stroke`: outside tooling
+  parses it, so the stored document format stays free to change while this one
+  moves only with `formatVersion`. Nothing ever decodes it back into the app.
+- `DrawingDataBuilder.swift` — `SplineDocument` → that shape. Everything is
+  resolved on the way out so a consumer never has to reimplement a Tract rule:
+  colours as floats *and* hex, problem node ids as the address they print as
+  *today*, the estimated-properties bitmask as names, per-sample clocks as
+  seconds since the stroke's first sample.
+- `JSONExporter.swift` — the `ExportAdapter`. Compact (not pretty-printed: a page
+  of handwriting is tens of thousands of samples), keys sorted so two exports of
+  an unchanged drawing differ only in `exportedAt`, dates ISO 8601.
+
+**Per-sample timing** is `StrokePoint.timestamp`, captured from `UITouch.timestamp`
+in `CanvasUIView.makeStrokePoint`. It is seconds since the device booted, so only
+differences mean anything — which is exactly what the export writes as
+`timeOffset`. It is optional, and nil for documents written before it existed and
+for test/seed strokes built from bare coordinates; the builder measures offsets
+from the first sample that *has* a clock, so one missing value cannot shift a
+stroke's timeline.
+
+A tagged stroke exports its `nodeID` as well as the resolved address. That is
+deliberate: the id is the durable part, the address is a function of where the
+node sits today. A stroke whose node has since been deleted keeps the id and
+reports a null tag — the same way the rest of the app treats it.
+
+`Tests/Export/DrawingDataBuilderTests.swift` covers the mapping (telemetry,
+timing, tag resolution, viewport clipping); `Tests/Export/JSONExporterTests.swift`
+covers the bytes (parses, round-trips through the schema, empty document throws).
+
 ## Problem tagging
 
 `Stroke.problemTag` is an optional `ProblemTag` marking which problem a stroke is
@@ -995,6 +1039,8 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, add to `ExportMenu.adapters` |
 | Change the export button or its expanding format options | `ExportMenu.swift` |
 | Change how ink is rasterised (PNG, PDF, thumbnails) | `StrokeRasterizer.swift` |
+| Add a field to the raw JSON data export | `DrawingDataSchema.swift` for the shape, `DrawingDataBuilder.swift` for where the value comes from; adding a field does not bump `formatVersion`, changing or removing one does |
+| Capture a new per-sample pencil property | `StrokePoint.swift` (optional, so old documents still decode) → `CanvasUIView.makeStrokePoint` → `DrawingDataBuilder.exportedPoint` |
 | Change the PDF's paper size, orientation or margins | `PDFExportOptions.swift`; add a size to `PaperSize.standardSizes` |
 | Change the problem table's grid, labels or borders | `ProblemTableLayout` in `PDFExportOptions.swift`; drawing in `PDFPageRenderer.swift` |
 | Change how many problems land on a page, or how far their ink is scaled up | `PDFExportOptions.problemSheet` — `columns`/`rows` on its layout, `problemCellMaximumScale` for the fit |
