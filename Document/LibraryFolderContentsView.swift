@@ -163,6 +163,7 @@ struct LibraryFolderContentsView: View {
         uiState.editorSession = DocumentEditorSession(
             metadata: metadata,
             store: library.store,
+            folderPath: metadata.folderID.map { library.tree.path(to: $0).map(\.name) } ?? [],
             // Folding each save back into the list is what keeps a card's date and
             // preview correct without re-reading the whole library on dismissal.
             onSaved: { library.applySavedMetadata($0) }

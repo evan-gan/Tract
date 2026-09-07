@@ -8,6 +8,7 @@
 #   ./scripts/screenshot.sh light "" librarylist     # document library, outline with a folder open
 #   ./scripts/screenshot.sh light "" folder          # inside a folder, breadcrumb showing
 #   ./scripts/screenshot.sh light "" exportmenu      # Export dropdown, open
+#   ./scripts/screenshot.sh dark "" sharesheet       # the share sheet an export ends at
 #   ./scripts/screenshot.sh light "" problempicker   # problem wheel, with a tree in it
 #   ./scripts/screenshot.sh both "iPad Air 13-inch (M3)"
 #
@@ -39,8 +40,9 @@ case "$SCREEN" in
   librarylist) TEST_METHOD=testCaptureLibraryList ;;
   folder) TEST_METHOD=testCaptureFolder ;;
   exportmenu) TEST_METHOD=testCaptureExportMenu ;;
+  sharesheet) TEST_METHOD=testCaptureShareSheet ;;
   problempicker) TEST_METHOD=testCaptureProblemPicker ;;
-  *)       fail "Unknown screen '${SCREEN}' — use canvas, library, librarylist, folder, exportmenu or problempicker." ;;
+  *)       fail "Unknown screen '${SCREEN}' — use canvas, library, librarylist, folder, exportmenu, sharesheet or problempicker." ;;
 esac
 
 SNAPSHOT_TEST="TractUITests/CanvasSnapshotUITests/$TEST_METHOD"

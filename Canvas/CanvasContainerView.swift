@@ -93,6 +93,7 @@ struct CanvasContainerView: View {
                 glassNamespace: glassNamespace,
                 onClose: closeDocument,
                 makeDocument: currentDocument,
+                folderPath: session.folderPath,
                 problems: viewModel.problems,
                 // The bar only: the problem wheel hangs out of its underside
                 // when open, and the dock must not slide down the screen with it.

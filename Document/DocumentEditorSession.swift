@@ -43,6 +43,13 @@ final class DocumentEditorSession: Identifiable {
 
     let viewModel: CanvasViewModel
 
+    /// The names of the library folders holding this document, outermost first;
+    /// empty at the top level. Captured when the document is opened rather than
+    /// looked up on demand: the library cannot be reorganised while the canvas
+    /// is up, and the session has no business holding the whole library to
+    /// answer one question about naming an export.
+    let folderPath: [String]
+
     var title: String {
         get { metadata.title }
         set {
@@ -64,12 +71,14 @@ final class DocumentEditorSession: Identifiable {
         metadata: DocumentMetadata,
         store: DocumentFileStore,
         viewModel: CanvasViewModel = CanvasViewModel(),
+        folderPath: [String] = [],
         onSaved: @escaping (DocumentMetadata) -> Void = { _ in }
     ) {
         self.id = metadata.id
         self.metadata = metadata
         self.store = store
         self.viewModel = viewModel
+        self.folderPath = folderPath
         self.onSaved = onSaved
     }
 

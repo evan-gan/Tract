@@ -7,7 +7,7 @@ Infinite canvas vector note-taking app for iPad. Every stroke stores full Apple 
 ```bash
 ./scripts/build.sh                    # compile / type-check, unsigned
 ./scripts/test.sh                     # unit + UI tests on an iPad simulator
-./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportmenu|problempicker]
+./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportmenu|sharesheet|problempicker]
 ./scripts/deploy-device.sh            # signed build installed on a connected iPad
 xcodegen generate                     # after editing project.yml
 ```
@@ -169,8 +169,8 @@ Tract/
 │
 ├── Export/
 │   ├── ExportAdapter.swift       # Protocol all exporters conform to
-│   ├── ExportMenu.swift          # Filled capsule on the bar; expands in place into SVG / PDF / Problems / PNG / JSON → share sheet
-│   ├── ExportFileNaming.swift    # Document title → safe file name
+│   ├── ExportMenu.swift          # Filled capsule on the bar; expands in place into a folder-path toggle + SVG / PDF / Problems / PNG / JSON → share sheet
+│   ├── ExportFileNaming.swift    # Document title (+ optional folder path prefix) → safe file name
 │   ├── StrokeRasterizer.swift    # Shared strokes → CGContext drawing (PNG, PDF, thumbnails); `inkedBounds` is the nib-padded crop box
 │   ├── InkFitTransform.swift     # Shared "scale ink to fit this box and centre it" maths
 │   ├── ThumbnailRenderer.swift   # Strokes → the fixed-size card preview PNG
@@ -991,6 +991,59 @@ would be claiming a nib that isn't there.
 
 ---
 
+## Naming an exported file
+
+`ExportFileNaming.fileName(title:folderPath:fileExtension:)` is the only place a
+file name is built, and it does two things:
+
+- **Sanitising.** `/`, `\` and `:` become `-`. A `/` left in a title is read by
+  `URL.appending(path:)` as a directory separator, so the write lands in a folder
+  that does not exist and a perfectly valid title fails to export. A title with
+  nothing usable left in it falls back to "Drawing".
+- **The folder prefix.** The library folders holding the document, outermost
+  first, joined with periods and put in front of the title —
+  `Homework.Algebra.Set 3.pdf`. Periods inside a folder name are replaced too:
+  here the period is the separator, so "Unit 1.2" would otherwise read back as
+  two levels of nesting.
+
+The prefix is opt-in. `ExportMenu` shows a folder toggle ahead of the formats,
+but **only for a document that is actually filed somewhere** — a top-level
+document has no path, so the control would be a switch that does nothing. The
+choice is remembered in `UserDefaults` under `exportIncludesFolderPath`: someone
+exporting a term of worksheets wants one naming scheme, not a decision per file.
+UI tests pin it with `-exportIncludesFolderPath NO` so one test cannot decide
+what the next one starts with.
+
+The path itself is captured when the document is opened
+(`LibraryFolderContentsView.open` → `DocumentEditorSession.folderPath` →
+`TopBarView` → `ExportMenu`) rather than looked up on demand: the library cannot
+be reorganised while the canvas is up, and the session has no business holding
+the whole library to answer one question about naming.
+
+### The share sheet's appearance
+
+`ExportMenu` presents its share sheet with an explicit
+`.environment(\.colorScheme, systemColorScheme)`, read off the **window** rather
+than inherited. Liquid Glass derives its appearance from what is behind it, and
+behind the top bar is a canvas that is white in every scheme — so the glass hands
+everything it hosts a *light* `colorScheme` even on a dark device. On the bar
+that is invisible (`glassChrome` gives its labels literal colours), but the share
+sheet is presented from inside that subtree and inherited it, so exporting on a
+dark iPad raised a bright white system sheet.
+
+Measured, not guessed: at export time the window trait and
+`UITraitCollection.current` are both `.dark` while SwiftUI's environment
+`colorScheme` inside `ExportMenu` is `.light`. Setting
+`overrideUserInterfaceStyle` on the `UIActivityViewController` — or on every
+controller above it — changes nothing, because the presentation follows the
+SwiftUI environment. The environment stamp is the fix.
+
+The failure alert does **not** need this: SwiftUI presents alerts in their own
+window, above the glass, and it already comes up dark. `./scripts/screenshot.sh
+dark "" sharesheet` is the regression check.
+
+---
+
 ## Exporting to PDF
 
 A PDF export is a **print job**, not a screenshot of the canvas. Two consequences
@@ -1262,6 +1315,8 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change what Apple Pencil's double tap does | `CanvasViewModel.togglePencilShortcutTool()` |
 | Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, add to `ExportMenu.adapters` |
 | Change the export button or its expanding format options | `ExportMenu.swift` |
+| Fix system UI presented from the top bar coming up in the wrong appearance | Stamp `.environment(\.colorScheme, …)` from the window, as `ExportMenu` does for its share sheet — the glass rewrites the inherited scheme |
+| Change how an exported file is named, or the folder-path prefix | `ExportFileNaming.swift`; the toggle that switches the prefix on is `ExportMenu.folderPathToggle` (remembered in `UserDefaults` as `exportIncludesFolderPath`), and the path itself rides down as `DocumentEditorSession.folderPath` → `TopBarView` → `ExportMenu` |
 | Change how ink is rasterised (PNG, PDF, thumbnails) | `StrokeRasterizer.swift` |
 | Add a field to the raw JSON data export | `DrawingDataSchema.swift` for the shape, `DrawingDataBuilder.swift` for where the value comes from; adding a field does not bump `formatVersion`, changing or removing one does |
 | Capture a new per-sample pencil property | `StrokePoint.swift` (optional, so old documents still decode) → `CanvasUIView.makeStrokePoint` → `DrawingDataBuilder.exportedPoint` |

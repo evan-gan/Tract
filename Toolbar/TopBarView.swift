@@ -20,6 +20,9 @@ struct TopBarView: View {
     let onClose: () -> Void
     /// Handed to the export menu, which calls it only when a format is picked.
     let makeDocument: () -> SplineDocument
+    /// The library folders the open document is filed in, outermost first.
+    /// Export offers them as a prefix on the file name.
+    var folderPath: [String] = []
     /// The problem tree and the tag new ink is filed under.
     let problems: ProblemTaggingModel
     /// Height of the bar itself, reported so a dock parked at the top can settle
@@ -50,7 +53,7 @@ struct TopBarView: View {
             wheelSegment
             row { separator }
             row {
-                ExportMenu(makeDocument: makeDocument)
+                ExportMenu(makeDocument: makeDocument, folderPath: folderPath)
                     .glassEffectID("export", in: glassNamespace)
             }
         }

@@ -85,14 +85,20 @@ final class CanvasSnapshotUITests: XCTestCase {
 
     /// Captures the Export control expanded, which is the only way to see the
     /// format options — the plain canvas shot shows just the collapsed button.
+    ///
+    /// It opens the *filed* document rather than a top-level one so the shot also
+    /// shows the folder-path naming toggle, which a top-level document hides.
     func testCaptureExportMenu() {
-        let app = XCUIApplication()
-        app.launchArguments.append("-TractSeedSampleDocuments")
-        app.launch()
+        let app = launchSeededLibrary(viewMode: "grid")
 
-        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Wave study'")).firstMatch
+        let folder = app.buttons["folderCard-Homework"].firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 15),
+                      "The seeded library should contain the Homework folder.")
+        folder.tap()
+
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Filed away'")).firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 15),
-                      "The seeded library should contain the Wave study drawing.")
+                      "The Homework folder should contain the filed drawing.")
         card.tap()
 
         let exportButton = app.buttons["Export"].firstMatch
@@ -107,6 +113,40 @@ final class CanvasSnapshotUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
 
         attachScreenshot(named: "exportmenu")
+    }
+
+    /// Captures the share sheet an export ends at.
+    ///
+    /// Worth its own shot because the sheet is system UI presented from inside
+    /// the top bar's glass, and glass rewrites the appearance of everything under
+    /// it — which is exactly how the sheet once came up in light mode on a dark
+    /// device.
+    func testCaptureShareSheet() {
+        let app = launchSeededLibrary(viewMode: "grid")
+
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Wave study'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15),
+                      "The seeded library should contain the Wave study drawing.")
+        card.tap()
+
+        let exportButton = app.buttons["Export"].firstMatch
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
+                      "The canvas should offer an Export button.")
+        exportButton.tap()
+
+        let pdfOption = app.buttons["Export as PDF"].firstMatch
+        XCTAssertTrue(pdfOption.waitForExistence(timeout: 10),
+                      "The expanded control should offer PDF as a format.")
+        pdfOption.tap()
+
+        // The sheet slides up and then fills in its activity rows; shooting on
+        // first appearance catches an empty panel mid-animation.
+        XCTAssertTrue(app.otherElements["ActivityListView"].firstMatch.waitForExistence(timeout: 20)
+                      || app.buttons["Copy"].firstMatch.waitForExistence(timeout: 20),
+                      "Exporting should reach the share sheet before the shot is taken.")
+        Thread.sleep(forTimeInterval: 2.5)
+
+        attachScreenshot(named: "sharesheet")
     }
 
     /// Captures the problem picker with a tree in it — a cold canvas has only

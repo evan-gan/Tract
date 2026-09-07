@@ -27,4 +27,74 @@ struct ExportFileNamingTests {
     func whitespaceIsTrimmed() {
         #expect(ExportFileNaming.fileName(title: "  Sketch  ", fileExtension: "pdf") == "Sketch.pdf")
     }
+
+    // MARK: - Folder path prefix
+
+    @Test("A folder path is prefixed onto the name, separated by periods")
+    func folderPathBecomesADottedPrefix() {
+        #expect(
+            ExportFileNaming.fileName(
+                title: "Filed away",
+                folderPath: ["Homework"],
+                fileExtension: "pdf"
+            ) == "Homework.Filed away.pdf"
+        )
+        #expect(
+            ExportFileNaming.fileName(
+                title: "Set 3",
+                folderPath: ["Homework", "Algebra"],
+                fileExtension: "png"
+            ) == "Homework.Algebra.Set 3.png"
+        )
+    }
+
+    @Test("A top-level document gets no prefix at all")
+    func emptyPathAddsNothing() {
+        #expect(ExportFileNaming.fileName(title: "Wave study", folderPath: [], fileExtension: "svg") == "Wave study.svg")
+    }
+
+    @Test("A period inside a folder name is replaced so it cannot read as nesting")
+    func periodsInFolderNamesAreReplaced() {
+        // "Unit 1.2" left alone would come back out of the name as two folders.
+        #expect(
+            ExportFileNaming.fileName(
+                title: "Sketch",
+                folderPath: ["Unit 1.2"],
+                fileExtension: "pdf"
+            ) == "Unit 1-2.Sketch.pdf"
+        )
+    }
+
+    @Test("A folder name that is only separators is dropped from the prefix")
+    func unusableFolderNamesAreSkipped() {
+        #expect(
+            ExportFileNaming.fileName(
+                title: "Sketch",
+                folderPath: ["...", "Homework"],
+                fileExtension: "pdf"
+            ) == "Homework.Sketch.pdf"
+        )
+    }
+
+    @Test("Slashes in a folder name cannot turn the prefix into a real directory")
+    func slashesInFolderNamesAreReplaced() {
+        #expect(
+            ExportFileNaming.fileName(
+                title: "Sketch",
+                folderPath: ["Term 1/2"],
+                fileExtension: "pdf"
+            ) == "Term 1-2.Sketch.pdf"
+        )
+    }
+
+    @Test("A prefix still applies when the title itself is unusable")
+    func placeholderTitleKeepsThePrefix() {
+        #expect(
+            ExportFileNaming.fileName(
+                title: "   ",
+                folderPath: ["Homework"],
+                fileExtension: "svg"
+            ) == "Homework.Drawing.svg"
+        )
+    }
 }

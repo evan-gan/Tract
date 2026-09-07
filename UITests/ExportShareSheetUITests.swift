@@ -76,6 +76,36 @@ final class ExportShareSheetUITests: XCTestCase {
                       "Exporting the raw data should reach the share sheet.")
     }
 
+    // MARK: - Folder path in the file name
+
+    /// The toggle names the file after the folders holding the document, so it
+    /// only means anything for a document that is actually filed somewhere.
+    func testFolderPathToggleIsOfferedForAFiledDocument() throws {
+        let app = launchWithSampleDocuments()
+        openFiledSampleDocument(in: app)
+
+        expandExportControl(in: app)
+
+        let pathToggle = app.buttons["exportIncludeFolderPath"].firstMatch
+        XCTAssertTrue(pathToggle.waitForExistence(timeout: 10),
+                      "A document inside a folder should offer the folder-path naming toggle.")
+        pathToggle.tap()
+
+        app.buttons["Export as PDF"].firstMatch.tap()
+        XCTAssertTrue(waitForShareSheet(in: app),
+                      "Exporting with the folder path switched on should still reach the share sheet.")
+    }
+
+    func testFolderPathToggleIsHiddenForATopLevelDocument() throws {
+        let app = launchWithSampleDocuments()
+        openSampleDocument(in: app)
+
+        expandExportControl(in: app)
+
+        XCTAssertFalse(app.buttons["exportIncludeFolderPath"].firstMatch.exists,
+                       "A top-level document has no path to prefix, so the toggle should not be there.")
+    }
+
     // MARK: - Steps
 
     private func launchWithSampleDocuments() -> XCUIApplication {
@@ -84,6 +114,13 @@ final class ExportShareSheetUITests: XCTestCase {
         // canvas takes Apple Pencil touches only. An empty document would export
         // nothing and fail for the wrong reason.
         app.launchArguments.append("-TractSeedSampleDocuments")
+        // Naming exports after their folder is a remembered preference, so a test
+        // that switches it on would otherwise decide what every later test starts
+        // with. `UserDefaults` reads launch arguments before stored values.
+        app.launchArguments += ["-exportIncludesFolderPath", "NO"]
+        // The filed document is reached through its folder card, which only the
+        // grid has; the layout is remembered, so it has to be pinned.
+        app.launchArguments += ["-libraryViewMode", "grid"]
         app.launch()
         return app
     }
@@ -93,6 +130,29 @@ final class ExportShareSheetUITests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: 15),
                       "The seeded library should contain the Wave study drawing.")
         card.tap()
+    }
+
+    /// Opens "Filed away", the seeded document inside the "Homework" folder.
+    private func openFiledSampleDocument(in app: XCUIApplication) {
+        let folder = app.buttons["folderCard-Homework"].firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 15),
+                      "The seeded library should contain the Homework folder.")
+        folder.tap()
+
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Filed away'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15),
+                      "The Homework folder should contain the filed drawing.")
+        card.tap()
+    }
+
+    private func expandExportControl(in app: XCUIApplication) {
+        let exportButton = app.buttons["Export"].firstMatch
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
+                      "The canvas should offer an Export button.")
+        exportButton.tap()
+
+        XCTAssertTrue(app.buttons["Export as PDF"].firstMatch.waitForExistence(timeout: 10),
+                      "The control should expand into its format options.")
     }
 
     /// `UIActivityViewController` exposes itself as "ActivityListView"; the Copy

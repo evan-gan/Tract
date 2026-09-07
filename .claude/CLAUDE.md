@@ -33,7 +33,7 @@ be opened.** Everything below runs headless from the shell.
 ./scripts/test.sh ["iPad Pro 11-inch (M5)"]
 
 # Screenshot a screen on a simulator — light, dark, or both
-./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportmenu|problempicker]
+./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportmenu|sharesheet|problempicker]
 ```
 
 `scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
@@ -46,11 +46,15 @@ simulator, sets its light/dark appearance, runs the capture test in
 `UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
 into `build/screenshots/<screen>-<appearance>.png` — read that file to see the change.
 
-Six screens are wired up: `canvas` (the default), `library` (the document grid),
+Seven screens are wired up: `canvas` (the default), `library` (the document grid),
 `librarylist` (the outline, with a folder expanded), `folder` (inside a folder,
 where the breadcrumb lives), `exportmenu` (the Export control expanded, which the canvas shot cannot show
-because the button is collapsed there), and `problempicker` (the problem wheel
-with a tree in it — a fresh canvas shows only dashes).
+because the button is collapsed there — it opens the *filed* sample document, so
+the folder-path naming toggle is in the shot as well), `sharesheet` (the system
+share sheet an export ends at — worth its own shot because it is presented from
+inside the bar's glass, which rewrites the appearance of what it hosts), and
+`problempicker` (the problem wheel with a tree in it — a fresh canvas shows only
+dashes).
 
 Do not hand-roll this. It exists because the pieces are non-obvious:
 
