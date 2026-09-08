@@ -79,6 +79,12 @@ final class DocumentLibrary {
         folders(in: folderID).count + documents(in: folderID).count
     }
 
+    /// Whether a folder holds nothing at all — no documents, no subfolders.
+    /// Deleting one of these destroys no work, so it skips the confirmation.
+    func isEmpty(folderID: UUID) -> Bool {
+        itemCount(in: folderID) == 0
+    }
+
     /// Every document that would be destroyed by deleting `folderID`, including
     /// those nested in its subfolders. The delete prompt says the number out
     /// loud, because the alternative is a drag-and-drop app quietly binning work.

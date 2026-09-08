@@ -53,6 +53,44 @@ struct CanvasTransform: Sendable {
         canvasLength * scale
     }
 
+    /// The transform that shows `contentRect` centred in a view of `viewSize`,
+    /// as large as the zoom limits and `padding` allow.
+    ///
+    /// - Parameters:
+    ///   - contentRect: Canvas-space box to bring into view.
+    ///   - viewSize: Size of the canvas view, in screen points.
+    ///   - padding: Screen-space breathing room to leave on every side.
+    /// - Returns: The fitted transform, or `nil` when there is nothing to fit —
+    ///   an empty box, or a view too small to hold the padding.
+    static func fitting(
+        _ contentRect: CGRect,
+        inViewOfSize viewSize: CGSize,
+        padding: CGFloat = 48
+    ) -> CanvasTransform? {
+        guard !contentRect.isNull, !contentRect.isInfinite else { return nil }
+
+        let availableWidth = viewSize.width - padding * 2
+        let availableHeight = viewSize.height - padding * 2
+        guard availableWidth > 0, availableHeight > 0 else { return nil }
+
+        // A drawing with no extent on an axis — a single dot, one horizontal
+        // line — puts no ceiling on the zoom from that axis, so it sits out of
+        // the minimum rather than dividing by zero.
+        let widthLimit = contentRect.width > 0 ? availableWidth / contentRect.width : .infinity
+        let heightLimit = contentRect.height > 0 ? availableHeight / contentRect.height : .infinity
+        let unclampedScale = min(widthLimit, heightLimit)
+
+        var fitted = CanvasTransform()
+        // Assigning through `scale` clamps to the zoom limits; `.infinity` — every
+        // axis unbounded — lands on the maximum, which is the right answer for a dot.
+        fitted.scale = unclampedScale
+        fitted.translation = CGPoint(
+            x: viewSize.width / 2 - contentRect.midX * fitted.scale,
+            y: viewSize.height / 2 - contentRect.midY * fitted.scale
+        )
+        return fitted
+    }
+
     /// Convert a screen-space length — a fingertip's reach, an eraser tip — to
     /// canvas units, so a tolerance that should stay a fixed size under the hand
     /// can be compared against canvas geometry.

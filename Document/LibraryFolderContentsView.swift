@@ -58,7 +58,7 @@ struct LibraryFolderContentsView: View {
                         itemCount: library.itemCount(in: folder.id),
                         onOpen: { navigateInto(folder) },
                         onRename: { uiState.ask(.renameFolder(folder)) },
-                        onDelete: { uiState.deletion = .folder(folder) },
+                        onDelete: { uiState.requestDeletion(of: .folder(folder), in: library) },
                         onDrop: { drop($0, into: folder.id) }
                     )
                 }

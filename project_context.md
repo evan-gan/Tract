@@ -58,11 +58,11 @@ Tract/
 │   ├── CanvasSelectionLayer.swift # Lasso loop, selection outline, selection action menu
 │   ├── PencilHoverDot.swift      # The hover dot as a CALayer — moved inside the hover callback, not by SwiftUI
 │   ├── PencilHoverDotView.swift  # Hosts that layer above the selection chrome, on the canvas view's own frame
-│   ├── CanvasZoomIndicator.swift # The zoom pill, wired to the live scale
+│   ├── CanvasZoomIndicator.swift # The zoom pill, wired to the live scale and the fit-to-drawing action
 │   ├── CanvasBackgroundView.swift # White paper + dot grid, both tracking the transform
 │   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, pan phase
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
-│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–400%, screen↔canvas conversion, visible rect
+│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–400%, screen↔canvas conversion, visible rect, `fitting(_:inViewOfSize:padding:)`
 │
 ├── Toolbar/                      # Fixed top chrome (close, title, save dot, problem wheel, export)
 │   ├── TopBarView.swift          # The one top pill: back, title, save dot, problem tag, Export
@@ -91,7 +91,7 @@ Tract/
 │   └── OpacitySlider.swift
 │
 ├── Overlay/                      # Floating chrome above canvas
-│   ├── ZoomIndicatorView.swift   # "100%" readout, top-right. Tap → reset zoom.
+│   ├── ZoomIndicatorView.swift   # Top-right pill: "100%" readout (tap → reset zoom) | divider | home button (tap → fit the whole drawing)
 │   ├── SelectionStyle.swift      # Shared selection tokens: red, dash, standoff, softening
 │   ├── LassoPathView.swift       # The loop being traced, drawn closed and static
 │   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection; draws the contours the view model traced
@@ -99,7 +99,7 @@ Tract/
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures, SelectionFixtures (a canvas with ink already lassoed), TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
-│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths + visible rect, pencil hover, path cache, sample thinning
+│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths + visible rect, zoom-to-fit maths, pencil hover, path cache, sample thinning
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails, folder tree + filing
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
@@ -158,7 +158,7 @@ Tract/
 │   ├── LibraryViewMode.swift     # Grid vs list, and the preference that remembers which
 │   ├── LibraryOutline.swift      # Pure: flattens the tree into indented rows for the expanded folders
 │   ├── LibraryListView.swift     # The outline — folders expand in place, previews kept
-│   ├── LibraryListRows.swift     # One folder row (chevron opens in place, row navigates) + one document row
+│   ├── LibraryListRows.swift     # One folder row (chevron opens in place, row navigates) + one document row + the compact drag preview both use
 │   ├── LibraryItemReference.swift # What a library drag carries (document-or-folder + id), as Transferable
 │   ├── LibraryTile.swift         # Shared tile chrome + caption, so folders and documents match
 │   ├── DocumentCard.swift        # One card: preview, title, last edited, draggable, rename/delete menu
@@ -712,6 +712,12 @@ That inversion is the point:
 - **Deleting a folder cascades**, and documents are deleted *before* the folder
   list is rewritten: dying in between leaves emptier folders, which the user can
   see, instead of documents filed into a folder that no longer exists.
+- **An empty folder is deleted without a confirmation.** Nothing is lost, so the
+  dialog is only noise. `LibraryUIState.folderDeletableWithoutConfirmation` makes
+  that call — pure, so it is tested without a dialog
+  (`Tests/Document/LibraryDeletionPromptTests.swift`) — and "empty" means no
+  documents *and* no subfolders, so a folder holding only empty subfolders still
+  asks, since folders the user named and arranged are also work.
 
 `FolderTree` holds every question about nesting — children, path, descendants, and
 `canMove(folderID:into:)`, which is what stops a folder being dropped into itself
@@ -766,9 +772,33 @@ navigates in — which is the split Finder's list view uses.
 
 Which rows that produces is `LibraryOutline.rows(tree:documents:in:expandedFolderIDs:)`,
 kept pure and separate from the view: "what is on screen when these two folders are
-expanded" is the part worth testing, and `List` renders whatever it is handed. Note
+expanded" is the part worth testing, and the view renders whatever it is handed. Note
 that expansion state is stored in `LibraryUIState`, not the view, so drilling into a
 folder and coming back does not collapse everything.
+
+The outline is a `ScrollView` + `LazyVStack`, **not a `List`**, and that is about
+drag and drop: a list row carries UIKit's own drag/drop interaction, which eats the
+row's `.draggable`/`.dropDestination`, so nothing could be filed from the outline
+while the grid — a plain scrolling stack — filed things fine. Two more pieces of
+that fix: each row needs `.contentShape(.rect)` (a row is mostly empty space to the
+right of its name, and without a shape only the glyph and the text can be grabbed or
+dropped onto), and the outline as a whole is a drop target for the folder it is
+rooted at, since something dragged *out* of an expanded folder needs somewhere at
+this level to land. Rows sit above that background target and take their drops first.
+
+Two things about a row's drag that the grid gets for free, because a tile is small
+and a row is as wide as the page:
+
+- **Rows carry an explicit drag preview** (`LibraryRowDragPreview` — the small
+  preview plus the name, capped at 240pt). Without it SwiftUI derives the preview
+  from the row itself: a full-width slab that hangs off to the side of the finger
+  and puts the system's green "+" badge nowhere near the thing being dragged.
+- **A targeted row rings its folder tile rather than tinting the row.** Filling the
+  row's background washes the whole page blue, and the outline's background target
+  stays targeted while the drag is over a row inside it, so tinting *that* too flashed
+  the entire screen. The background target is deliberately unhighlighted; the ring
+  on the tile is the grid's `libraryTileChrome(isHighlighted:)` look at row scale.
+  The folder glyph swapping to `folder.fill.badge.plus` is the other half of it.
 
 One trap worth knowing: the view mode persists between launches, so a UI test that
 switches to the outline changes what every later test and screenshot sees. The

@@ -12,7 +12,9 @@ struct CanvasZoomIndicator: View {
     var body: some View {
         ZoomIndicatorView(
             scale: viewModel.canvasTransform.scale,
-            onReset: viewModel.resetZoom
+            canZoomToFit: viewModel.canZoomToFitDrawing,
+            onReset: viewModel.resetZoom,
+            onZoomToFit: viewModel.zoomToFitDrawing
         )
         .glassEffectID("zoomIndicator", in: glassNamespace)
     }

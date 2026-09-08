@@ -100,14 +100,15 @@ private struct LibraryDialogs: ViewModifier {
     }
 
     /// Deleting a folder takes everything inside it, so the count is spelled out
-    /// rather than left for the user to discover afterwards.
+    /// rather than left for the user to discover afterwards. An empty folder
+    /// never gets here — it is deleted without asking.
     private func deletionWarning(for target: LibraryDeletion) -> String {
         switch target {
         case .document:
             "This permanently removes the document and its drawing."
         case .folder(let folder):
             switch library.documentCount(withinTreeOf: folder.id) {
-            case 0: "This permanently removes the folder."
+            case 0: "This permanently removes the folder and the folders inside it."
             case 1: "This permanently removes the folder and the 1 document inside it."
             case let count: "This permanently removes the folder and the \(count) documents inside it."
             }

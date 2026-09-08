@@ -33,6 +33,11 @@ struct CanvasContainerView: View {
                 .ignoresSafeArea()
             CanvasView(viewModel: viewModel, hoverDot: pencilHoverDot)
                 .ignoresSafeArea()
+                // Measured off the drawing surface itself, not the chrome, so
+                // "fit the drawing" centres it in the paper the user sees.
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+                    viewModel.noteViewportSize(size)
+                }
             // Sits above the touch layer but passes every touch through, so the
             // lasso keeps tracking while its own outline is on screen.
             CanvasSelectionLayer(viewModel: viewModel)

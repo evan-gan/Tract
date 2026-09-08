@@ -15,14 +15,31 @@ struct LibraryListView: View {
     /// Handles items dropped on a folder. Returns whether anything moved.
     let onDrop: ([LibraryItemReference], UUID?) -> Bool
 
+    /// A scroll view rather than a `List`: a list row carries UIKit's own drag
+    /// and drop interaction, which eats the row's `draggable`/`dropDestination`
+    /// so nothing can be filed from the outline. The grid already files things
+    /// correctly from a plain scrolling stack, so the outline uses the same one.
     var body: some View {
-        List(rows) { row in
-            content(for: row)
-                .padding(.leading, CGFloat(row.depth) * LibraryListRow.indentPerLevel)
-                .listRowInsets(.init(top: 2, leading: 16, bottom: 2, trailing: 16))
-                .listRowSeparator(.hidden)
+        ScrollView {
+            LazyVStack(spacing: 4) {
+                ForEach(rows) { row in
+                    content(for: row)
+                        .padding(.leading, CGFloat(row.depth) * LibraryListRow.indentPerLevel)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
-        .listStyle(.plain)
+        // The outline shows nested contents, so something dragged out of an
+        // expanded folder needs a way back to this level. Rows sit on top of
+        // this and take their own drops first.
+        //
+        // Deliberately unhighlighted: it stays targeted while the drag is over a
+        // row inside it, so tinting it washes the whole page blue on top of the
+        // row's own highlight. The grid files things with no background tint either.
+        .dropDestination(for: LibraryItemReference.self) { items, _ -> Bool in
+            onDrop(items, folderID)
+        }
         .animation(.easeOut(duration: 0.2), value: uiState.expandedFolderIDs)
     }
 
@@ -46,7 +63,7 @@ struct LibraryListView: View {
                 onToggleExpansion: { uiState.toggleExpansion(of: folder.id) },
                 onOpen: { onOpenFolder(folder) },
                 onRename: { uiState.ask(.renameFolder(folder)) },
-                onDelete: { uiState.deletion = .folder(folder) },
+                onDelete: { uiState.requestDeletion(of: .folder(folder), in: library) },
                 onDrop: { onDrop($0, folder.id) }
             )
         case .document(let metadata):

@@ -179,6 +179,15 @@ final class CanvasViewModel {
     // MARK: - Canvas navigation
     var canvasTransform = CanvasTransform()
 
+    /// Size of the canvas view in screen points, reported by the view that hosts
+    /// it. Zooming to fit is the only thing that needs it: the drawing can only
+    /// be centred against a viewport whose size is known.
+    private(set) var viewportSize: CGSize = .zero
+
+    func noteViewportSize(_ size: CGSize) {
+        viewportSize = size
+    }
+
     // MARK: - Pencil hover
     /// Where the pencil is hovering above the glass, in screen space, or `nil`
     /// when it is out of range or already touching down.
@@ -720,6 +729,41 @@ final class CanvasViewModel {
     func resetZoom() {
         withAnimation(.spring(duration: 0.35)) {
             canvasTransform = CanvasTransform()
+        }
+    }
+
+    /// The canvas-space box every visible mark fits inside, or `nil` when the
+    /// document has no ink to aim at. Nib width is included: fitting to the
+    /// centrelines alone would clip the outer half of the widest stroke.
+    var inkedBounds: CGRect? {
+        let inkStrokes = StrokeRasterizer.inkStrokes(strokes)
+        guard !inkStrokes.isEmpty else { return nil }
+        let bounds = StrokeRasterizer.inkedBounds(of: inkStrokes)
+        return bounds.isNull ? nil : bounds
+    }
+
+    /// Whether the home button has somewhere to go. An empty document does not:
+    /// there is no drawing to centre on.
+    ///
+    /// Deliberately cheaper than `inkedBounds` — the zoom pill re-evaluates on
+    /// every frame of a pinch, and measuring every point of every stroke that
+    /// often would make navigation cost more the more the user has drawn.
+    var canZoomToFitDrawing: Bool {
+        viewportSize.width > 0
+            && strokes.contains { $0.style.tool.isDrawingTool && $0.points.count >= 2 }
+    }
+
+    /// Frames the whole drawing: centred in the viewport, zoomed as far in as it
+    /// will go. Does nothing when there is no ink, so a stray tap on an empty
+    /// canvas cannot throw the view somewhere arbitrary.
+    func zoomToFitDrawing() {
+        guard
+            let bounds = inkedBounds,
+            let fitted = CanvasTransform.fitting(bounds, inViewOfSize: viewportSize)
+        else { return }
+
+        withAnimation(.spring(duration: 0.35)) {
+            canvasTransform = fitted
         }
     }
 }

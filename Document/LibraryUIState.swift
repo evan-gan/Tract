@@ -98,6 +98,27 @@ final class LibraryUIState {
         self.prompt = prompt
     }
 
+    /// Routes a delete request: an empty folder goes straight in the bin, since
+    /// there is nothing to lose and nothing worth reading a warning about.
+    /// Anything holding work raises the confirmation dialog first.
+    func requestDeletion(of target: LibraryDeletion, in library: DocumentLibrary) {
+        guard let folderID = folderDeletableWithoutConfirmation(target, in: library) else {
+            deletion = target
+            return
+        }
+        Task { await library.deleteFolder(id: folderID) }
+    }
+
+    /// - Returns: The folder that may be deleted on the spot, or nil when the
+    ///   user has to confirm first.
+    func folderDeletableWithoutConfirmation(
+        _ target: LibraryDeletion,
+        in library: DocumentLibrary
+    ) -> UUID? {
+        guard case .folder(let folder) = target, library.isEmpty(folderID: folder.id) else { return nil }
+        return folder.id
+    }
+
     func toggleExpansion(of folderID: UUID) {
         if expandedFolderIDs.remove(folderID) == nil {
             expandedFolderIDs.insert(folderID)
