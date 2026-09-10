@@ -590,9 +590,19 @@ final class CanvasViewModel {
         defer { lassoPath.removeAll() }
         let loop = lassoPath
         guard loop.count >= 3 else { return }
-        selectedStrokeIDs = Set(
+        select(strokeIDs: Set(
             strokes.filter { StrokeGeometry.stroke($0, isEnclosedBy: loop) }.map(\.id)
-        )
+        ))
+    }
+
+    /// Makes a set of strokes the live selection, framed and ready to be moved,
+    /// deleted or re-filed. Every way of picking ink up ends here, so a
+    /// selection made by double-tapping a problem behaves exactly like a lassoed
+    /// one. Selection is not an edit, so it never touches undo.
+    private func select(strokeIDs: Set<UUID>) {
+        hideSelectionMenu()
+        cancelSelectionDrag()
+        selectedStrokeIDs = strokeIDs
         // Captured once, here: the frame is canvas geometry from now on.
         selectionStandoff = SelectionStyle.standoff / max(canvasTransform.scale, .ulpOfOne)
         retraceSelectionOutline()
@@ -701,6 +711,35 @@ final class CanvasViewModel {
         } else if pickedProblemHasRegion {
             problems.clearSelection()
         }
+    }
+
+    /// Picks up every mark filed under the problem whose region the point lands
+    /// in, exactly as though the user had lassoed it.
+    ///
+    /// A problem's region is already the visible answer to "this patch of paper
+    /// is problem 3", so double-tapping it is the shortest way to grab that work
+    /// as a whole — to drag it, delete it, or re-file it under another problem —
+    /// without tracing a loop the region has effectively already drawn.
+    ///
+    /// - Parameter canvasPoint: Where the second tap landed, in canvas space.
+    /// - Returns: Whether a region was hit and its ink selected. A double tap on
+    ///   blank paper does nothing at all, rather than clearing anything: the
+    ///   single tap is what steps out of a problem.
+    @discardableResult
+    func handleCanvasDoubleTap(at canvasPoint: CGPoint) -> Bool {
+        guard let region = problemRegion(containing: canvasPoint) else { return false }
+        // The wheel follows the ink that was picked up, so whatever the menu's
+        // Reassign is measured against is the problem the user is looking at.
+        problems.selectNode(region.nodeID)
+        select(strokeIDs: Set(inkFiled(underProblem: region.nodeID).map(\.id)))
+        return true
+    }
+
+    /// The ink a problem's region was traced from — drawing tools only, and never
+    /// a single-sample tap, matching what `ProblemBoundsCache` frames. Anything
+    /// else would put marks in the selection that the user cannot see framed.
+    private func inkFiled(underProblem nodeID: UUID) -> [Stroke] {
+        StrokeRasterizer.inkStrokes(strokes).filter { $0.problemNodeID == nodeID }
     }
 
     /// Whether the problem the picker is pointed at is one the user can see

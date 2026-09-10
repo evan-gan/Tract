@@ -48,6 +48,11 @@ final class CanvasUIView: UIView {
     // through the lasso's own begin/end path, which tells a tap from a drag there.
     private let canvasTapGesture = UITapGestureRecognizer()
 
+    // Double-tapping a problem's region picks its whole answer up as a
+    // selection. Finger-only like the single tap: a pencil double tap on the
+    // paper is two marks being drawn, and the nib already has the lasso.
+    private let problemSelectDoubleTapGesture = UITapGestureRecognizer()
+
     // Canvas-space positions of the two fingers captured at gesture start.
     // Held fixed for the duration of the gesture; each frame solves for the
     // transform that maps these canvas points back to the current finger positions.
@@ -109,6 +114,15 @@ final class CanvasUIView: UIView {
         canvasTapGesture.delegate = self
         canvasTapGesture.addTarget(self, action: #selector(handleCanvasTap(_:)))
         addGestureRecognizer(canvasTapGesture)
+
+        problemSelectDoubleTapGesture.allowedTouchTypes = [fingerTouchType]
+        problemSelectDoubleTapGesture.numberOfTapsRequired = 2
+        problemSelectDoubleTapGesture.delegate = self
+        problemSelectDoubleTapGesture.addTarget(
+            self,
+            action: #selector(handleProblemSelectDoubleTap(_:))
+        )
+        addGestureRecognizer(problemSelectDoubleTapGesture)
     }
 
     private func configurePencilInteraction() {
@@ -263,6 +277,18 @@ final class CanvasUIView: UIView {
         }
     }
 
+    /// A finger double tap on a problem's region: selects that problem's whole
+    /// answer, so it can be dragged, deleted or re-filed as one thing.
+    @objc private func handleProblemSelectDoubleTap(_ gesture: UITapGestureRecognizer) {
+        guard let viewModel, gesture.state == .ended else { return }
+        let screenLocation = gesture.location(in: self)
+        MainActor.assumeIsolated {
+            _ = viewModel.handleCanvasDoubleTap(
+                at: viewModel.canvasTransform.toCanvas(screenLocation)
+            )
+        }
+    }
+
     // MARK: - Gesture gating
 
     /// The selection drag claims a finger only when it starts on the selection.
@@ -401,6 +427,29 @@ extension CanvasUIView: UIGestureRecognizerDelegate {
         guard touch.type == .direct else { return true }
         return !FingerPanArbiter.isLikelyPalm(majorRadius: touch.majorRadius,
                                               tolerance: touch.majorRadiusTolerance)
+    }
+
+    /// Makes the single tap wait for the double tap — but only where a double
+    /// tap means something.
+    ///
+    /// A blanket `require(toFail:)` would put the double-tap delay on *every*
+    /// tap on the paper, so stepping out of a problem or opening the selection
+    /// menu would visibly lag. Deciding per touch keeps that instant everywhere
+    /// except on a problem's region, which is the only place the second tap has
+    /// anything to do. A tap on a live selection is excluded too: that touch
+    /// belongs to the selection the user is already holding.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === canvasTapGesture,
+              other === problemSelectDoubleTapGesture,
+              let viewModel
+        else { return false }
+        return MainActor.assumeIsolated {
+            let screenLocation = gestureRecognizer.location(in: self)
+            let canvasPoint = viewModel.canvasTransform.toCanvas(screenLocation)
+            guard !viewModel.selectionContains(canvasPoint) else { return false }
+            return viewModel.problemRegion(containing: canvasPoint) != nil
+        }
     }
 
     /// The one-finger pan must never lock the pinch out.

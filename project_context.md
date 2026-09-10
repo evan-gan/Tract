@@ -101,7 +101,7 @@ Tract/
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures, SelectionFixtures (a canvas with ink already lassoed), TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
-│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, problem regions + the taps on them, zoom-scaled widths + visible rect, zoom-to-fit maths, pencil hover, path cache, sample thinning
+│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, problem regions + the taps on them (single tap navigates, double tap selects the problem's ink), zoom-scaled widths + visible rect, zoom-to-fit maths, pencil hover, path cache, sample thinning
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails, folder tree + filing
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, ProblemRegion padding/bridging, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
@@ -662,6 +662,29 @@ retraced problems 1 through 6 as well. `ProblemBoundsCache.traceCount` exists so
    the tag away before a single stroke had been filed under it
    (`ProblemPickerUITests.testTappingTheTagOpensAndTheCanvasClosesIt` is what
    catches that).
+
+**Double-tapping** a region (`CanvasViewModel.handleCanvasDoubleTap`, from
+`problemSelectDoubleTapGesture`) picks that problem's whole answer up as a
+selection — the same state a lasso around it produces, so dragging it, deleting
+it and Reassign all work on it unchanged. The region is already the visible
+answer to "this patch of paper is problem 3", so there is no reason to make the
+user trace a loop the app has already drawn. It selects the ink the region was
+traced from (drawing tools, two samples or more), points the picker at that
+problem, and does nothing at all on blank paper — stepping out of a problem stays
+the single tap's job. Covered by `Tests/Canvas/ProblemDoubleTapSelectionTests.swift`.
+
+Every way of picking ink up funnels through `CanvasViewModel.select(strokeIDs:)`,
+which is what fixes the canvas-space standoff and re-traces the frame. Add a new
+one there rather than assigning `selectedStrokeIDs` directly, or the selection
+comes up unframed.
+
+The single tap is **not** blanket-`require(toFail:)`ed behind the double tap:
+that would put the double-tap delay on every touch on the paper, and stepping out
+of a problem would visibly lag. `gestureRecognizer(_:shouldRequireFailureOf:)`
+decides per touch instead, delaying the single tap only where the touch landed in
+a region and not on a live selection — the only place the second tap means
+anything. Both taps are finger-only, like the rest of the canvas chrome: a pencil
+double tap on the paper is two marks being drawn, and the nib has the lasso.
 
 ---
 
