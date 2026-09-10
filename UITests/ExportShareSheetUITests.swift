@@ -1,7 +1,8 @@
 import XCTest
 
 /// Smoke test: a single export, from a freshly launched app, reaches a share
-/// sheet that actually has content in it.
+/// sheet that actually has content in it — and the export picker offers each
+/// layout's formats on the way there.
 ///
 /// **This does not guard the empty-sheet bug it was written for.** That bug —
 /// `.sheet(isPresented:)` presenting before the exported file landed in state,
@@ -18,62 +19,59 @@ final class ExportShareSheetUITests: XCTestCase {
     func testShareSheetAppearsOnTheFirstPDFExport() throws {
         let app = launchWithSampleDocuments()
         openSampleDocument(in: app)
+        openExportPicker(in: app)
 
-        let exportButton = app.buttons["Export"].firstMatch
-        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
-                      "The canvas should offer an Export button.")
-        exportButton.tap()
-
-        let pdfOption = app.buttons["Export as PDF"].firstMatch
-        XCTAssertTrue(pdfOption.waitForExistence(timeout: 10),
-                      "The expanded control should offer PDF as a format.")
-        pdfOption.tap()
+        tapExportOption("exportOption-wholeDrawing-pdf", in: app)
 
         XCTAssertTrue(waitForShareSheet(in: app),
                       "The share sheet should appear on the very first export, "
                       + "not only after a previous one has populated the view's state.")
     }
 
-    /// The problem sheet is a second PDF behind the same control, and the two are
-    /// told apart only by their button labels — so the wiring is worth a test.
-    func testProblemSheetIsOfferedAsItsOwnFormat() throws {
+    /// The worksheet is its own group in the picker, offering only PDF — the
+    /// grouping is the whole point of the sheet, so the wiring is worth a test.
+    func testProblemWorksheetIsItsOwnGroupOfferingOnlyPDF() throws {
         let app = launchWithSampleDocuments()
         openSampleDocument(in: app)
+        openExportPicker(in: app)
 
-        let exportButton = app.buttons["Export"].firstMatch
-        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
-                      "The canvas should offer an Export button.")
-        exportButton.tap()
+        XCTAssertFalse(app.buttons["exportOption-problemWorksheet-png"].firstMatch.exists,
+                       "The worksheet layout only renders as a PDF, so no other "
+                       + "format should be offered under it.")
 
-        let problemsOption = app.buttons["Export as Problems"].firstMatch
-        XCTAssertTrue(problemsOption.waitForExistence(timeout: 10),
-                      "The expanded control should offer the per-problem sheet alongside PDF.")
-        problemsOption.tap()
+        tapExportOption("exportOption-problemWorksheet-pdf", in: app)
 
         XCTAssertTrue(waitForShareSheet(in: app),
-                      "Exporting the problem sheet should reach the share sheet. "
+                      "Exporting the problem worksheet should reach the share sheet. "
                       + "The sample drawings carry no tags, so this also proves an "
                       + "all-untagged document still produces its one explanatory page.")
     }
 
     /// The raw-data export shares a file rather than a picture, and it is the one
     /// format whose whole point is leaving the app — so the path out is tested.
-    func testJSONDataExportIsOfferedAsItsOwnFormat() throws {
+    func testRawCaptureExportsAsJSON() throws {
         let app = launchWithSampleDocuments()
         openSampleDocument(in: app)
+        openExportPicker(in: app)
 
-        let exportButton = app.buttons["Export"].firstMatch
-        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
-                      "The canvas should offer an Export button.")
-        exportButton.tap()
-
-        let jsonOption = app.buttons["Export as JSON"].firstMatch
-        XCTAssertTrue(jsonOption.waitForExistence(timeout: 10),
-                      "The expanded control should offer the raw JSON data export.")
-        jsonOption.tap()
+        tapExportOption("exportOption-rawCapture-json", in: app)
 
         XCTAssertTrue(waitForShareSheet(in: app),
                       "Exporting the raw data should reach the share sheet.")
+    }
+
+    /// Backing out of the picker must export nothing at all: the export runs when
+    /// the sheet closes, so a cancel that still carried a pick would share a file
+    /// nobody asked for.
+    func testCancellingThePickerExportsNothing() throws {
+        let app = launchWithSampleDocuments()
+        openSampleDocument(in: app)
+        openExportPicker(in: app)
+
+        app.buttons["Cancel"].firstMatch.tap()
+
+        XCTAssertFalse(waitForShareSheet(in: app, timeout: 5),
+                       "Cancelling the export picker should not share anything.")
     }
 
     // MARK: - Folder path in the file name
@@ -83,15 +81,14 @@ final class ExportShareSheetUITests: XCTestCase {
     func testFolderPathToggleIsOfferedForAFiledDocument() throws {
         let app = launchWithSampleDocuments()
         openFiledSampleDocument(in: app)
+        openExportPicker(in: app)
 
-        expandExportControl(in: app)
-
-        let pathToggle = app.buttons["exportIncludeFolderPath"].firstMatch
+        let pathToggle = app.switches["exportIncludeFolderPath"].firstMatch
         XCTAssertTrue(pathToggle.waitForExistence(timeout: 10),
                       "A document inside a folder should offer the folder-path naming toggle.")
         pathToggle.tap()
 
-        app.buttons["Export as PDF"].firstMatch.tap()
+        tapExportOption("exportOption-wholeDrawing-pdf", in: app)
         XCTAssertTrue(waitForShareSheet(in: app),
                       "Exporting with the folder path switched on should still reach the share sheet.")
     }
@@ -99,10 +96,9 @@ final class ExportShareSheetUITests: XCTestCase {
     func testFolderPathToggleIsHiddenForATopLevelDocument() throws {
         let app = launchWithSampleDocuments()
         openSampleDocument(in: app)
+        openExportPicker(in: app)
 
-        expandExportControl(in: app)
-
-        XCTAssertFalse(app.buttons["exportIncludeFolderPath"].firstMatch.exists,
+        XCTAssertFalse(app.switches["exportIncludeFolderPath"].firstMatch.exists,
                        "A top-level document has no path to prefix, so the toggle should not be there.")
     }
 
@@ -145,14 +141,21 @@ final class ExportShareSheetUITests: XCTestCase {
         card.tap()
     }
 
-    private func expandExportControl(in app: XCUIApplication) {
+    private func openExportPicker(in app: XCUIApplication) {
         let exportButton = app.buttons["Export"].firstMatch
         XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
                       "The canvas should offer an Export button.")
         exportButton.tap()
 
-        XCTAssertTrue(app.buttons["Export as PDF"].firstMatch.waitForExistence(timeout: 10),
-                      "The control should expand into its format options.")
+        XCTAssertTrue(app.buttons["exportOption-wholeDrawing-pdf"].firstMatch.waitForExistence(timeout: 10),
+                      "The export picker should be on screen with its options.")
+    }
+
+    private func tapExportOption(_ identifier: String, in app: XCUIApplication) {
+        let option = app.buttons[identifier].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 10),
+                      "The export picker should offer \(identifier).")
+        option.tap()
     }
 
     /// `UIActivityViewController` exposes itself as "ActivityListView"; the Copy

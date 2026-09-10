@@ -24,6 +24,10 @@ extension ExportAdapter {
 enum ExportError: LocalizedError {
     case noStrokes
     case renderingFailed(String)
+    /// A layout was asked for a format it cannot produce. Unreachable from the
+    /// export picker, which only offers each layout's own formats — this catches
+    /// a pairing invented in code.
+    case unsupportedFormat(layout: String, format: String)
 
     var errorDescription: String? {
         switch self {
@@ -31,6 +35,8 @@ enum ExportError: LocalizedError {
             "The document has no strokes to export."
         case .renderingFailed(let detail):
             "Export rendering failed: \(detail)"
+        case .unsupportedFormat(let layout, let format):
+            "\(layout) cannot be exported as \(format)."
         }
     }
 }

@@ -7,7 +7,7 @@ Infinite canvas vector note-taking app for iPad. Every stroke stores full Apple 
 ```bash
 ./scripts/build.sh                    # compile / type-check, unsigned
 ./scripts/test.sh                     # unit + UI tests on an iPad simulator
-./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportmenu|sharesheet|problempicker]
+./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportpicker|sharesheet|problempicker]
 ./scripts/deploy-device.sh            # signed build installed on a connected iPad
 xcodegen generate                     # after editing project.yml
 ```
@@ -69,7 +69,7 @@ Tract/
 │   ├── TopBarSurfaceShape.swift  # That pill's outline, tongue and all, as one path
 │   ├── DocumentTitleView.swift   # Editable title pill
 │   └── SaveIndicatorView.swift   # Quiet dot showing there is unsaved work
-│                                 # (the Export control itself is Export/ExportMenu.swift)
+│                                 # (the Export control itself is Export/ExportButton.swift)
 │
 ├── ToolDock/                     # The movable floating tool bar
 │   ├── FloatingToolDock.swift    # Placement + drag/snap between screen edges
@@ -105,14 +105,14 @@ Tract/
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails, folder tree + filing
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, ProblemRegion padding/bridging, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
-│   ├── Export/                   # Paper geometry, ink fitting, problem grouping, PDF output, raw JSON data export
+│   ├── Export/                   # Layout/format catalogue, the export runner, paper geometry, ink fitting, problem grouping, PDF output, raw JSON data export
 │   │   └── Worksheet/            # Hulls, thinning, badges, packing, growth, separators, block building
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
 │   ├── ToolDockDragUITests.swift # The dock's drag/snap gesture
 │   ├── CanvasZoomUITests.swift   # Pinch limits, read back off the zoom pill
 │   ├── ProblemPickerUITests.swift # Wheel rows tapped, the dash, flicking a column
-│   ├── ExportShareSheetUITests.swift # Each format in the export control reaches a share sheet
+│   ├── ExportShareSheetUITests.swift # Each layout/format in the export picker reaches a share sheet; cancelling exports nothing
 │   └── CanvasSnapshotUITests.swift # Screenshot capture driven by scripts/screenshot.sh
 │
 ├── ProblemPicker/                # Tagging control in the top chrome (the wheel)
@@ -176,7 +176,12 @@ Tract/
 │
 ├── Export/
 │   ├── ExportAdapter.swift       # Protocol all exporters conform to
-│   ├── ExportMenu.swift          # Filled capsule on the bar; expands in place into a folder-path toggle + SVG / PDF / Problems / PNG / JSON → share sheet
+│   ├── ExportLayout.swift        # The catalogue the picker is built from: ExportFormat (pdf/svg/png/json) and ExportLayout (whole drawing / problem worksheet / raw capture) → the adapter for each offered pairing
+│   ├── ExportRunner.swift        # Picked layout + format → rendered, named file on disk (no view involved)
+│   ├── ExportButton.swift        # Filled capsule on the bar; opens the picker, then shares what it was asked for
+│   ├── ExportPickerView.swift    # The picker sheet: one card per layout, its formats inside, folder-path toggle last; sized to its contents
+│   ├── ExportGroupCard.swift     # One titled card + its row divider — the grouped-list look, without a scroll view
+│   ├── ExportFormatRow.swift     # One pickable format: icon, name, what the file is, its extension
 │   ├── ExportFileNaming.swift    # Document title (+ optional folder path prefix) → safe file name
 │   ├── StrokeRasterizer.swift    # Shared strokes → CGContext drawing (PNG, PDF, thumbnails); `inkedBounds` is the nib-padded crop box
 │   ├── InkFitTransform.swift     # Shared "scale ink to fit this box and centre it" maths
@@ -1125,6 +1130,59 @@ would be claiming a nib that isn't there.
 
 ---
 
+## The export picker
+
+Export asks two questions, and the sheet is built to keep them apart:
+
+1. **What lands on the page** — an `ExportLayout`. Three of them: the whole
+   drawing as one picture, the per-problem worksheet, and the raw capture.
+2. **Which file it is written as** — an `ExportFormat` (`pdf`, `svg`, `png`,
+   `json`), chosen from the ones that layout can actually produce.
+
+`ExportLayout.adapter(for:)` is the join: it returns the configured
+`ExportAdapter` for a pairing, or nil for one that layout does not offer. The
+worksheet is PDF-only because only `PDFPageRenderer` knows how to flow it onto
+pages; the raw capture is JSON-only for the same kind of reason. Offering every
+format under every layout would mean offering exports that cannot be produced.
+
+This replaced a capsule that expanded in place into a flat row of format names.
+That worked at three options and broke at five: "PDF" and "Problems" sat side by
+side as if they were the same kind of choice, when one is a format and the other
+is a layout that happens to be a PDF.
+
+The pieces:
+
+- `ExportLayout.swift` — the catalogue. Adding a layout or a format is this file
+  plus a `Tests/Export/ExportLayoutTests` run, which checks every offered pairing
+  resolves to an adapter and that the caption's extension is the one actually
+  written. The picker renders whatever is here, in declaration order.
+- `ExportRunner.writeExport(of:layout:format:folderPath:into:)` — render, name,
+  write, hand back a URL. No view, so `Tests/Export/ExportRunnerTests` can run
+  every pairing the picker offers end to end.
+- `ExportButton.swift` — the capsule on the bar. It owns the whole flow, so the
+  canvas carries no share-sheet or error state.
+- `ExportPickerView.swift` + `ExportGroupCard` + `ExportFormatRow` — the sheet.
+
+Two things in the sheet that are the way they are on purpose:
+
+- **The export runs on the picker's *dismissal*, not on the tap.** The pick lands
+  in `pendingChoice`, the sheet closes, and `onDismiss` renders and raises the
+  share sheet. A share sheet presented while another sheet is still on screen
+  either does not appear or comes up empty. A cancel leaves nothing pending, and
+  `ExportShareSheetUITests.testCancellingThePickerExportsNothing` holds that.
+- **It is hand-built cards, not a `List`.** The sheet is sized to its contents
+  with `.presentationSizing(.form.fitted(horizontal: false, vertical: true))` so
+  every option is visible at a glance — and a list is a scroll view, which has no
+  height of its own to give, so the sheet came up scrolling with the last options
+  cut off.
+
+Rows carry `exportOption-<layout>-<format>` identifiers (`exportOption-wholeDrawing-pdf`,
+`exportOption-problemWorksheet-pdf`, `exportOption-rawCapture-json`) — the same
+format appears under more than one layout, so a label alone cannot name a row.
+`./scripts/screenshot.sh both "" exportpicker` is the shot.
+
+---
+
 ## Naming an exported file
 
 `ExportFileNaming.fileName(title:folderPath:fileExtension:)` is the only place a
@@ -1140,7 +1198,7 @@ file name is built, and it does two things:
   here the period is the separator, so "Unit 1.2" would otherwise read back as
   two levels of nesting.
 
-The prefix is opt-in. `ExportMenu` shows a folder toggle ahead of the formats,
+The prefix is opt-in. The export picker's last card is a folder toggle,
 but **only for a document that is actually filed somewhere** — a top-level
 document has no path, so the control would be a switch that does nothing. The
 choice is remembered in `UserDefaults` under `exportIncludesFolderPath`: someone
@@ -1150,13 +1208,14 @@ what the next one starts with.
 
 The path itself is captured when the document is opened
 (`LibraryFolderContentsView.open` → `DocumentEditorSession.folderPath` →
-`TopBarView` → `ExportMenu`) rather than looked up on demand: the library cannot
+`TopBarView` → `ExportButton`) rather than looked up on demand: the library cannot
 be reorganised while the canvas is up, and the session has no business holding
 the whole library to answer one question about naming.
 
 ### The share sheet's appearance
 
-`ExportMenu` presents its share sheet with an explicit
+`ExportButton` presents both of its sheets — the picker and the share sheet —
+with an explicit
 `.environment(\.colorScheme, systemColorScheme)`, read off the **window** rather
 than inherited. Liquid Glass derives its appearance from what is behind it, and
 behind the top bar is a canvas that is white in every scheme — so the glass hands
@@ -1167,7 +1226,7 @@ dark iPad raised a bright white system sheet.
 
 Measured, not guessed: at export time the window trait and
 `UITraitCollection.current` are both `.dark` while SwiftUI's environment
-`colorScheme` inside `ExportMenu` is `.light`. Setting
+`colorScheme` inside `ExportButton` is `.light`. Setting
 `overrideUserInterfaceStyle` on the `UIActivityViewController` — or on every
 controller above it — changes nothing, because the presentation follows the
 SwiftUI environment. The environment stamp is the fix.
@@ -1415,8 +1474,9 @@ rather than off a cell; `PDFPageRenderer.drawProblemTablePages` splits the group
 on `tag == nil` and paints the cell pages first.
 
 `PDFExporter.displayName` and `fileNameSuffix` are computed from the layout, so
-the same adapter shows up in the export control twice — "PDF" and "Problems" —
-and the two files are told apart in the share sheet.
+the same adapter backs two entries in the export picker — the whole drawing's PDF
+and the worksheet's — and the two files are told apart in the share sheet
+(`Set 3.pdf` against `Set 3 problems.pdf`).
 
 Still open: sub-parts currently share their problem's cell as one drawing when
 grouped by depth. Laying them out as *nested* sub-cells with their own headings
@@ -1451,10 +1511,12 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change how the canvas is panned, or tune palm rejection | `FingerPanArbiter.swift` for the thresholds and rules; `FingerPanGestureRecognizer.swift` for the touch bookkeeping |
 | Change the zoom limits | `minimumScale` / `maximumScale` in `CanvasTransform.swift` |
 | Change what Apple Pencil's double tap does | `CanvasViewModel.togglePencilShortcutTool()` |
-| Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, add to `ExportMenu.adapters` |
-| Change the export button or its expanding format options | `ExportMenu.swift` |
-| Fix system UI presented from the top bar coming up in the wrong appearance | Stamp `.environment(\.colorScheme, …)` from the window, as `ExportMenu` does for its share sheet — the glass rewrites the inherited scheme |
-| Change how an exported file is named, or the folder-path prefix | `ExportFileNaming.swift`; the toggle that switches the prefix on is `ExportMenu.folderPathToggle` (remembered in `UserDefaults` as `exportIncludesFolderPath`), and the path itself rides down as `DocumentEditorSession.folderPath` → `TopBarView` → `ExportMenu` |
+| Add a new export format | New `*Exporter.swift` conforming to `ExportAdapter`, a case in `ExportFormat`, then list it under the layouts that can produce it in `ExportLayout.formats` + `adapter(for:)` |
+| Add a new export *layout* (a different thing on the page) | A case in `ExportLayout` with its name, summary, formats and adapters — the picker renders it automatically |
+| Change the export button | `ExportButton.swift` |
+| Change the export picker's look or grouping | `ExportPickerView.swift` (cards: `ExportGroupCard.swift`, rows: `ExportFormatRow.swift`) |
+| Fix system UI presented from the top bar coming up in the wrong appearance | Stamp `.environment(\.colorScheme, …)` from the window, as `ExportButton` does for both its sheets — the glass rewrites the inherited scheme |
+| Change how an exported file is named, or the folder-path prefix | `ExportFileNaming.swift`; the toggle that switches the prefix on is `ExportPickerView.folderPathCard` (remembered in `UserDefaults` as `exportIncludesFolderPath`), and the path itself rides down as `DocumentEditorSession.folderPath` → `TopBarView` → `ExportButton` |
 | Change how ink is rasterised (PNG, PDF, thumbnails) | `StrokeRasterizer.swift` |
 | Add a field to the raw JSON data export | `DrawingDataSchema.swift` for the shape, `DrawingDataBuilder.swift` for where the value comes from; adding a field does not bump `formatVersion`, changing or removing one does |
 | Capture a new per-sample pencil property | `StrokePoint.swift` (optional, so old documents still decode) → `CanvasUIView.makeStrokePoint` → `DrawingDataBuilder.exportedPoint` |

@@ -37,7 +37,7 @@ by folder, so a new `.swift` file in an existing folder needs no config change; 
 top-level folder goes in `project.yml`.
 
 Because the canvas takes pencil input only, a simulator can't draw on it — hand-test on
-a real iPad, and use `screenshot.sh` (canvas / library / exportmenu / problempicker) to
+a real iPad, and use `screenshot.sh` (canvas / library / exportpicker / problempicker) to
 look at chrome changes. Xcode runs are slow, so bundle build + tests + screenshots into
 one invocation rather than running them one at a time.
 

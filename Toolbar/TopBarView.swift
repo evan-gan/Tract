@@ -53,7 +53,7 @@ struct TopBarView: View {
             wheelSegment
             row { separator }
             row {
-                ExportMenu(makeDocument: makeDocument, folderPath: folderPath)
+                ExportButton(makeDocument: makeDocument, folderPath: folderPath)
                     .glassEffectID("export", in: glassNamespace)
             }
         }

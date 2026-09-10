@@ -83,12 +83,12 @@ final class CanvasSnapshotUITests: XCTestCase {
         return app
     }
 
-    /// Captures the Export control expanded, which is the only way to see the
-    /// format options — the plain canvas shot shows just the collapsed button.
+    /// Captures the export picker, which is the only way to see the layouts and
+    /// their formats — the plain canvas shot shows just the Export button.
     ///
     /// It opens the *filed* document rather than a top-level one so the shot also
     /// shows the folder-path naming toggle, which a top-level document hides.
-    func testCaptureExportMenu() {
+    func testCaptureExportPicker() {
         let app = launchSeededLibrary(viewMode: "grid")
 
         let folder = app.buttons["folderCard-Homework"].firstMatch
@@ -106,13 +106,13 @@ final class CanvasSnapshotUITests: XCTestCase {
                       "The canvas should offer an Export button.")
         exportButton.tap()
 
-        XCTAssertTrue(app.buttons["Export as PDF"].firstMatch.waitForExistence(timeout: 10),
-                      "The control should have expanded before the shot is taken.")
-        // The formats exist the instant the state flips, but the glass is still
-        // widening; shooting now catches a half-morphed pill.
-        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertTrue(app.buttons["exportOption-wholeDrawing-pdf"].firstMatch.waitForExistence(timeout: 10),
+                      "The picker should be on screen before the shot is taken.")
+        // The options exist the instant the sheet is presented, but it is still
+        // sliding up; shooting now catches it half way onto the screen.
+        Thread.sleep(forTimeInterval: 2.5)
 
-        attachScreenshot(named: "exportmenu")
+        attachScreenshot(named: "exportpicker")
     }
 
     /// Captures the share sheet an export ends at.
@@ -134,9 +134,9 @@ final class CanvasSnapshotUITests: XCTestCase {
                       "The canvas should offer an Export button.")
         exportButton.tap()
 
-        let pdfOption = app.buttons["Export as PDF"].firstMatch
+        let pdfOption = app.buttons["exportOption-wholeDrawing-pdf"].firstMatch
         XCTAssertTrue(pdfOption.waitForExistence(timeout: 10),
-                      "The expanded control should offer PDF as a format.")
+                      "The export picker should offer the whole drawing as a PDF.")
         pdfOption.tap()
 
         // The sheet slides up and then fills in its activity rows; shooting on
