@@ -46,26 +46,8 @@ struct SelectionOutlineView: View {
     private func outlinePath() -> Path {
         Path { path in
             for contour in contours {
-                appendSmoothedLoop(contour, to: &path)
+                path.addSmoothedLoop(through: contour.map { transform.toScreen($0 + dragOffset) })
             }
         }
-    }
-
-    /// Traces one contour with midpoint quadratic Béziers. Marching squares lands
-    /// its vertices on grid edges, so a raw loop carries a faint staircase;
-    /// curving through the midpoints takes it out without pulling the outline off
-    /// the shape it is describing.
-    private func appendSmoothedLoop(_ canvasContour: [CGPoint], to path: inout Path) {
-        guard canvasContour.count >= 3 else { return }
-        let screenPoints = canvasContour.map { transform.toScreen($0 + dragOffset) }
-        let lastIndex = screenPoints.count - 1
-
-        path.move(to: screenPoints[lastIndex].midpoint(to: screenPoints[0]))
-        for index in screenPoints.indices {
-            let vertex = screenPoints[index]
-            let next = screenPoints[index == lastIndex ? 0 : index + 1]
-            path.addQuadCurve(to: vertex.midpoint(to: next), control: vertex)
-        }
-        path.closeSubpath()
     }
 }

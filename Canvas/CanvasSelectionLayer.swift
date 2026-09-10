@@ -1,10 +1,15 @@
 import SwiftUI
 
-/// Lasso loop, selection outline and the selection's action menu.
+/// Every piece of chrome that tracks the canvas rather than the screen and
+/// belongs *over* the drawing: the lasso loop, the selection outline and the
+/// selection's action menu.
 ///
-/// All three track canvas content rather than the screen, so they stay outside
-/// the glass container and never take a glass material. Kept in their own view
-/// so a loop being traced repaints only this layer.
+/// The problem regions are not here. They read as markings on the paper, so they
+/// are drawn under the ink in `CanvasContentLayer`.
+///
+/// None of them can take a glass material — they sit over the paper, not over
+/// the app — so they stay outside the glass container. Kept in their own view so
+/// a loop being traced repaints only this layer.
 struct CanvasSelectionLayer: View {
     let viewModel: CanvasViewModel
 

@@ -54,8 +54,8 @@ Tract/
 │   ├── FingerPanArbiter.swift    # Pure palm-vs-finger rules behind that recognizer
 │   ├── CanvasRenderer.swift      # SwiftUI Canvas — committed ink and the live stroke, one layer each
 │   ├── StrokePathCache.swift     # Canvas-space Paths per stroke, so pan/zoom never re-traces ink
-│   ├── CanvasContentLayer.swift  # Paper + ink; owns the fast-changing reads so chrome is not invalidated
-│   ├── CanvasSelectionLayer.swift # Lasso loop, selection outline, selection action menu
+│   ├── CanvasContentLayer.swift  # Paper → problem regions → ink; owns the fast-changing reads so chrome is not invalidated
+│   ├── CanvasSelectionLayer.swift # Canvas-tracking chrome over the ink: lasso loop, selection outline, selection action menu
 │   ├── PencilHoverDot.swift      # The hover dot as a CALayer — moved inside the hover callback, not by SwiftUI
 │   ├── PencilHoverDotView.swift  # Hosts that layer above the selection chrome, on the canvas view's own frame
 │   ├── CanvasZoomIndicator.swift # The zoom pill, wired to the live scale and the fit-to-drawing action
@@ -95,13 +95,15 @@ Tract/
 │   ├── SelectionStyle.swift      # Shared selection tokens: red, dash, standoff, softening
 │   ├── LassoPathView.swift       # The loop being traced, drawn closed and static
 │   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection; draws the contours the view model traced
-│   └── SelectionActionMenuView.swift # Floating glass menu a tap on the selection opens (Reassign, Delete)
+│   ├── SelectionActionMenuView.swift # Floating glass menu a tap on the selection opens (Reassign, Delete)
+│   ├── ProblemBoundsStyle.swift  # Padding, curve radius, weights and opacities of the problem regions
+│   └── ProblemBoundsView.swift   # Draws every problem's region, tinted by problem, the picked one stronger
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures, SelectionFixtures (a canvas with ink already lassoed), TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
-│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, zoom-scaled widths + visible rect, zoom-to-fit maths, pencil hover, path cache, sample thinning
+│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, problem regions + the taps on them, zoom-scaled widths + visible rect, zoom-to-fit maths, pencil hover, path cache, sample thinning
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails, folder tree + filing
-│   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, problem tag format + notations
+│   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, ProblemRegion padding/bridging, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
 │   ├── Export/                   # Paper geometry, ink fitting, problem grouping, PDF output, raw JSON data export
 │   │   └── Worksheet/            # Hulls, thinning, badges, packing, growth, separators, block building
@@ -132,7 +134,12 @@ Tract/
 │   ├── StrokePoint.swift         # Single pencil sample (position, force, azimuth, altitude, roll, event timestamp)
 │   ├── Stroke.swift              # Full pen-down→pen-up gesture
 │   ├── StrokeGeometry.swift      # Segment intersection, point-in-polygon, eraser/lasso hit tests
+│   ├── DistanceField.swift       # Shared sampling grid: seed geometry, sweep, read distances back
+│   ├── MarchingSquares.swift     # Traces one of that field's iso-lines into closed loops
 │   ├── SelectionRegion.swift     # Dilates the selected ink into the contours the frame is drawn from
+│   ├── ProblemRegion.swift       # The *non-conforming* frame: a box shrunk onto the ink, curving over gaps
+│   ├── ProblemBounds.swift       # One tagged problem's region + the hit test a tap goes through
+│   ├── ProblemBoundsCache.swift  # Builds those regions, retracing only the problem whose ink changed
 │   ├── StrokeStyle.swift         # Color (SIMD4<Float>), width, opacity, ToolType
 │   ├── ProblemTag.swift          # Ordered levels ([1, a, ii]); Comparable parent→child
 │   ├── ProblemLabelStyle.swift   # Notations (number/letter/roman) as values + NumeralNotation
@@ -202,6 +209,7 @@ Tract/
 │
 ├── Utilities/
 │   ├── CGPoint+Math.swift        # +, -, *, distance, midpoint
+│   ├── Path+SmoothLoop.swift     # Closes a marching-squares loop with midpoint quadratics — both region outlines use it
 │   ├── CGRect+Spans.swift        # Containment that works for flat rects, which CGRect's own does not
 │   ├── AppTint.swift             # The shared attention red: active tool, lasso, selection
 │   ├── Color+Hex.swift           # Color(hex:), hexString, SIMD4<Float>(color:)
@@ -581,6 +589,79 @@ loses the drag.
 `ProblemPickerUITests` drives the wheel from outside — rows tapped, a column
 flicked — because none of this is visible to a unit test. Anything added to the
 top chrome should be checked the same way rather than assumed to work.
+
+### The region around each problem
+
+Every problem with ink on the page is framed on the canvas by a `ProblemBounds`,
+drawn by `ProblemBoundsView` in the problem's own tint — the picked one stronger
+than the rest — and tapped to move between problems without going near the wheel.
+
+**It is drawn under the ink**, in `CanvasContentLayer` between the paper and
+`CanvasRenderer`, not in `CanvasSelectionLayer` with the rest of the
+canvas-tracking chrome. A region is a marking *on the page*: its fill must not
+tint the handwriting it frames, and its outline must not cross it. Everything in
+the selection layer is the opposite — a live gesture the user is holding — and
+belongs over the drawing.
+
+**The shape is deliberately not the lasso's.** `SelectionRegion` *conforms* to the
+ink: it follows the drawing into the gap between two letters, which is the right
+answer to "which marks did I pick up" and the wrong one to "which patch of paper
+is problem 3". `ProblemRegion` is the non-conforming version — a box shrunk onto
+the work until it touched, curving over whatever it met on the way in.
+
+It is built by rolling a ball. Grow the ink by `padding + curveRadius`, then pull
+that back in by `curveRadius`, and the boundary you get is the path a ball of
+that radius traces around the outside of the padded ink: riding at exactly
+`padding` off the drawing wherever the work is dense, and arcing across anything
+narrower than itself instead of dipping into it. `curveRadius` is therefore the
+one dial for how much the shape refuses to conform — down towards the padding it
+becomes the lasso's frame (and `0` literally hands off to it), up towards the
+width of the work it approaches a plain rounded rectangle.
+
+The arithmetic falls out of the distance field with no second measurement,
+because a true distance function's sub-level set is offset by exactly the amount
+you shift the threshold: the ball fits wherever the ink is `padding + curveRadius`
+away, so those samples seed a second field over the same grid, and the region is
+everything a full radius from all of them. Two sweeps each, on a grid capped at
+128 a side — the shape is smooth by construction, so it needs far less resolution
+than the lasso's outline and costs a fraction of it. `DistanceField` and
+`MarchingSquares` are shared with `SelectionRegion`; the only difference at the
+call site is which side of the threshold counts as inside.
+
+**Both distances are canvas-space** (`ProblemBoundsStyle`), which is what makes
+the padding scale with distance: a region magnifies with the ink it frames, like
+stroke width and the selection frame, instead of crowding the writing at 400% and
+swamping it at 10% — and it never has to be re-traced by a pinch. The line weights
+*are* screen-space, because they are chrome.
+
+Regions live in `CanvasViewModel.problemRegions`, cached on the ink revision and
+the outline. Navigation never rebuilds them.
+
+**A rebuild is not a retrace.** `ProblemBoundsCache` builds that array and holds
+each problem's traced geometry against a fingerprint of the ink it came from —
+the stroke ids, their sample counts and their cached bounds, which together move
+with anything that changes a shape (new marks, a lasso drag, an erase, a retag)
+without walking a single point. So a commit retraces the one problem that was
+written in, laying down untagged ink retraces nothing at all, and a reorder —
+which renames every problem after the one that moved — only relabels shapes that
+are already traced, because the tag and the tint are resolved from the tree on
+every read rather than cached with the geometry. That matters because one trace
+is two distance-field sweeps: without the split, a mark added to problem 7
+retraced problems 1 through 6 as well. `ProblemBoundsCache.traceCount` exists so
+`Tests/Stroke/ProblemBoundsCacheTests.swift` can assert exactly that.
+
+**Tapping** (`CanvasViewModel.handleCanvasTap`, from the finger tap recognizer in
+`CanvasUIView`) reads in this order:
+
+1. A live lasso selection speaks first — it is the thing the user is holding.
+2. A tap landing in a region points the picker at that problem.
+3. A tap on blank paper steps out of the problem, **but only when the picked
+   problem has a region of its own**. That condition is not a detail: every touch
+   on the paper also folds the wheel away, so without it, picking a problem on a
+   fresh page and tapping the paper to get the chrome out of the way would throw
+   the tag away before a single stroke had been filed under it
+   (`ProblemPickerUITests.testTappingTheTagOpensAndTheCanvasClosesIt` is what
+   catches that).
 
 ---
 
@@ -1328,6 +1409,10 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change the selection outline's look or standoff | `SelectionStyle.swift` |
 | Change how the selection outline is shaped | `SelectionRegion.swift` (the dilation and its tracing); `CanvasViewModel.retraceSelectionOutline()` for when it is rebuilt; `SelectionOutlineView.swift` for the curve smoothing and the march |
 | Change what counts as grabbing a selection | `CanvasViewModel.selectionContains(_:)` |
+| Change how tightly a problem's region hugs the work | `curveRadius` in `ProblemBoundsStyle.swift` — down towards the padding conforms, up approaches a rectangle |
+| Change a problem region's clear space, colour or weight | `ProblemBoundsStyle.swift`; the drawing itself is `ProblemBoundsView.swift` |
+| Change how a problem's region is shaped | `ProblemRegion.swift` (the rolling ball); `ProblemBoundsCache.swift` for which ink each region is built from, and when it is retraced |
+| Change what a finger tap on the paper does | `CanvasViewModel.handleCanvasTap(at:)`; the recognizer is `canvasTapGesture` in `CanvasUIView.swift` |
 | Change how a selection is moved | The "Moving a selection" methods in `CanvasViewModel.swift`; the gestures live in `CanvasUIView.swift` |
 | Add an action to the selection menu | `selectionActions` in `CanvasSelectionLayer.swift`; the menu itself renders whatever it is handed |
 | Change what counts as a tap rather than a drag | `selectionTapMovementLimit` / `selectionTapDurationLimit` in `CanvasViewModel.swift` |

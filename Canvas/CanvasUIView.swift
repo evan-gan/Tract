@@ -42,10 +42,11 @@ final class CanvasUIView: UIView {
     // anywhere else still belongs to pan and zoom.
     private let selectionPanGesture = UIPanGestureRecognizer()
 
-    // A finger tapping the selection asks what can be done with it; tapping the
-    // blank paper drops it. Pencil taps need no equivalent: they already go
+    // A finger tapping the selection asks what can be done with it; tapping a
+    // problem's region switches the picker to that problem, and tapping the blank
+    // paper steps out of both. Pencil taps need no equivalent: they already go
     // through the lasso's own begin/end path, which tells a tap from a drag there.
-    private let selectionTapGesture = UITapGestureRecognizer()
+    private let canvasTapGesture = UITapGestureRecognizer()
 
     // Canvas-space positions of the two fingers captured at gesture start.
     // Held fixed for the duration of the gesture; each frame solves for the
@@ -104,10 +105,10 @@ final class CanvasUIView: UIView {
         selectionPanGesture.addTarget(self, action: #selector(handleSelectionPan(_:)))
         addGestureRecognizer(selectionPanGesture)
 
-        selectionTapGesture.allowedTouchTypes = [fingerTouchType]
-        selectionTapGesture.delegate = self
-        selectionTapGesture.addTarget(self, action: #selector(handleSelectionTap(_:)))
-        addGestureRecognizer(selectionTapGesture)
+        canvasTapGesture.allowedTouchTypes = [fingerTouchType]
+        canvasTapGesture.delegate = self
+        canvasTapGesture.addTarget(self, action: #selector(handleCanvasTap(_:)))
+        addGestureRecognizer(canvasTapGesture)
     }
 
     private func configurePencilInteraction() {
@@ -249,14 +250,16 @@ final class CanvasUIView: UIView {
         }
     }
 
-    /// Tapping the selection opens its action menu; tapping off it clears the
-    /// selection. The recognizer itself is what keeps a drag out of this: it only
-    /// fires for a touch that went down and up again without travelling.
-    @objc private func handleSelectionTap(_ gesture: UITapGestureRecognizer) {
+    /// A finger tap on the paper: on a selection it opens the action menu, on a
+    /// problem's region it switches the picker to that problem, and on blank
+    /// paper it steps out of whichever the user was in. The recognizer itself is
+    /// what keeps a drag out of this: it only fires for a touch that went down
+    /// and up again without travelling.
+    @objc private func handleCanvasTap(_ gesture: UITapGestureRecognizer) {
         guard let viewModel, gesture.state == .ended else { return }
         let screenLocation = gesture.location(in: self)
         MainActor.assumeIsolated {
-            viewModel.handleSelectionTap(at: viewModel.canvasTransform.toCanvas(screenLocation))
+            viewModel.handleCanvasTap(at: viewModel.canvasTransform.toCanvas(screenLocation))
         }
     }
 

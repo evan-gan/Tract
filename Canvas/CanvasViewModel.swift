@@ -39,6 +39,57 @@ final class CanvasViewModel {
         problems.inkStyling(for: strokes, revision: revision)
     }
 
+    // MARK: - Problem bounding regions
+
+    /// The shape framing each problem's work on the page, in canvas space.
+    ///
+    /// Rebuilt only when the ink or the tree changes: the regions are traced from
+    /// distance fields, which is far too much work to redo on a frame of a pan,
+    /// and they are pure canvas geometry so navigation never invalidates them.
+    ///
+    /// A rebuild is not a retrace. `ProblemBoundsCache` keeps each problem's
+    /// shape against its own ink, so writing in problem 7 retraces problem 7
+    /// alone, laying down untagged ink retraces nothing, and a reorder only
+    /// relabels what is already traced.
+    var problemRegions: [ProblemBounds] {
+        let key = ProblemRegionKey(revision: revision, outline: problems.outline)
+        if let cachedProblemRegions, cachedProblemRegionKey == key { return cachedProblemRegions }
+
+        let regions = problemBoundsCache.regions(
+            in: strokes,
+            outline: problems.outline,
+            padding: ProblemBoundsStyle.padding,
+            curveRadius: ProblemBoundsStyle.curveRadius
+        )
+        cachedProblemRegionKey = key
+        cachedProblemRegions = regions
+        return regions
+    }
+
+    /// The problem region a canvas point lands in, or `nil` for blank paper.
+    ///
+    /// Regions can overlap where two problems were written close together; the
+    /// smallest one wins, because it is the more specific answer to "which
+    /// problem is here".
+    func problemRegion(containing canvasPoint: CGPoint) -> ProblemBounds? {
+        problemRegions
+            .filter { $0.contains(canvasPoint) }
+            .min { $0.extent.width * $0.extent.height < $1.extent.width * $1.extent.height }
+    }
+
+    /// Ignored by observation for the same reason the ink styling cache is: a
+    /// cache written while a view reads it must not invalidate that view.
+    @ObservationIgnored private var cachedProblemRegionKey: ProblemRegionKey?
+    @ObservationIgnored private var cachedProblemRegions: [ProblemBounds]?
+    /// The per-problem shape memo behind that array, so only the problem being
+    /// written in is retraced when the page changes.
+    @ObservationIgnored private var problemBoundsCache = ProblemBoundsCache()
+
+    private struct ProblemRegionKey: Equatable {
+        let revision: Int
+        let outline: ProblemOutline
+    }
+
     /// How close, in screen points, a retag tap has to land to a mark to count
     /// as hitting it. Generous on purpose: the target is handwriting, which is
     /// mostly the white space between thin lines.
@@ -629,15 +680,39 @@ final class CanvasViewModel {
 
     // MARK: - Selection action menu
 
-    /// Routes a tap on the canvas while something is selected: on the selection
-    /// it offers what can be done with it, anywhere else it drops the selection.
-    func handleSelectionTap(at canvasPoint: CGPoint) {
-        guard hasSelection else { return }
-        if selectionContains(canvasPoint) {
-            toggleSelectionMenu(at: canvasPoint)
-        } else {
-            clearSelection()
+    /// Routes a tap on the paper.
+    ///
+    /// A live selection speaks first, because it is the thing the user is holding:
+    /// tapping it offers what can be done with it, tapping off it drops it.
+    /// Otherwise the tap is about the problem regions — landing in one points the
+    /// picker at that problem, and landing on blank paper outside every region
+    /// steps back out of the problem the user was in.
+    func handleCanvasTap(at canvasPoint: CGPoint) {
+        if hasSelection {
+            if selectionContains(canvasPoint) {
+                toggleSelectionMenu(at: canvasPoint)
+            } else {
+                clearSelection()
+            }
+            return
         }
+        if let region = problemRegion(containing: canvasPoint) {
+            problems.selectNode(region.nodeID)
+        } else if pickedProblemHasRegion {
+            problems.clearSelection()
+        }
+    }
+
+    /// Whether the problem the picker is pointed at is one the user can see
+    /// framed on the page.
+    ///
+    /// Only then is a tap on blank paper an exit. A problem picked but not yet
+    /// written in has no region to step out of, and the tap is doing the other
+    /// thing a touch on the paper does — folding the wheel away — which must not
+    /// throw away the tag the next stroke is about to be filed under.
+    private var pickedProblemHasRegion: Bool {
+        guard let nodeID = problems.selectedNodeID else { return false }
+        return problemRegions.contains { $0.nodeID == nodeID }
     }
 
     /// A second tap closes the menu again, so the user is never stuck with

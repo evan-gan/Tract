@@ -10,6 +10,7 @@
 #   ./scripts/screenshot.sh light "" exportmenu      # Export dropdown, open
 #   ./scripts/screenshot.sh dark "" sharesheet       # the share sheet an export ends at
 #   ./scripts/screenshot.sh light "" problempicker   # problem wheel, with a tree in it
+#   ./scripts/screenshot.sh light "" problembounds   # the region drawn around each problem's work
 #   ./scripts/screenshot.sh both "iPad Air 13-inch (M3)"
 #
 # PNGs land in build/screenshots/<screen>-<appearance>.png. The captures live in
@@ -42,7 +43,8 @@ case "$SCREEN" in
   exportmenu) TEST_METHOD=testCaptureExportMenu ;;
   sharesheet) TEST_METHOD=testCaptureShareSheet ;;
   problempicker) TEST_METHOD=testCaptureProblemPicker ;;
-  *)       fail "Unknown screen '${SCREEN}' — use canvas, library, librarylist, folder, exportmenu, sharesheet or problempicker." ;;
+  problembounds) TEST_METHOD=testCaptureProblemBounds ;;
+  *)       fail "Unknown screen '${SCREEN}' — use canvas, library, librarylist, folder, exportmenu, sharesheet, problempicker or problembounds." ;;
 esac
 
 SNAPSHOT_TEST="TractUITests/CanvasSnapshotUITests/$TEST_METHOD"

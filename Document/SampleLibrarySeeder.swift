@@ -31,19 +31,72 @@ enum SampleLibrarySeeder {
                 strokes: sample.strokes
             )
             document.metadata.modifiedAt = .now
+            document.metadata.problemOutline = sample.outline
             let thumbnail = ThumbnailRenderer.renderPNG(strokes: sample.strokes)
             try? await store.save(document, thumbnail: thumbnail.map(ThumbnailUpdate.replace) ?? .unchanged)
         }
     }
 
-    private static func samples(folderID: UUID) -> [(title: String, strokes: [Stroke], folderID: UUID?)] {
-        [
+    private typealias Sample = (
+        title: String,
+        strokes: [Stroke],
+        folderID: UUID?,
+        outline: ProblemOutline?
+    )
+
+    private static func samples(folderID: UUID) -> [Sample] {
+        let problemSet = taggedProblemSet()
+        return [
             ("Wave study", [sineStroke(color: InkColor.black, phase: 0),
-                            sineStroke(color: InkColor.black, phase: .pi / 2)], nil),
-            ("Grid sketch", gridStrokes(), nil),
-            ("Untitled", [], nil),
-            ("Filed away", gridStrokes(), folderID)
+                            sineStroke(color: InkColor.black, phase: .pi / 2)], nil, nil),
+            ("Grid sketch", gridStrokes(), nil, nil),
+            ("Untitled", [], nil, nil),
+            ("Problem set", problemSet.strokes, nil, problemSet.outline),
+            ("Filed away", gridStrokes(), folderID, nil)
         ]
+    }
+
+    /// A page of work filed under two problems, plus a patch of untagged ink.
+    ///
+    /// This is the fixture the problem-region shot is of: the regions are built
+    /// from tagged strokes, so every other sample document draws none. The
+    /// untagged patch is in there on purpose — it must come back unframed.
+    private static func taggedProblemSet() -> (strokes: [Stroke], outline: ProblemOutline) {
+        var outline = ProblemOutline()
+        outline.appendChild(under: [])
+        outline.appendChild(under: [])
+        let firstProblem = outline.node(at: [0])?.id
+        let secondProblem = outline.node(at: [1])?.id
+
+        // Laid out in canvas coordinates, which a freshly opened document shows
+        // one-to-one from the top left, so the work lands in the middle of the
+        // screen rather than under the top bar.
+        let strokes = writingStrokes(at: CGPoint(x: 170, y: 190), lines: 3, tag: firstProblem)
+            + writingStrokes(at: CGPoint(x: 170, y: 470), lines: 2, tag: secondProblem)
+            + writingStrokes(at: CGPoint(x: 700, y: 300), lines: 2, tag: nil)
+        return (strokes, outline)
+    }
+
+    /// Stands in for a few lines of handwriting: a zigzag per line, spaced the
+    /// way written lines are, so the region has real gaps to bridge rather than
+    /// one solid bar of ink.
+    private static func writingStrokes(
+        at origin: CGPoint,
+        lines: Int,
+        tag problemNodeID: UUID?
+    ) -> [Stroke] {
+        (0 ..< lines).map { line in
+            let baselineY = origin.y + CGFloat(line) * 46
+            let positions = stride(from: 0.0, through: 300.0, by: 15.0).map { offsetX in
+                CGPoint(
+                    x: origin.x + offsetX,
+                    y: baselineY + (offsetX.truncatingRemainder(dividingBy: 30) == 0 ? -9 : 9)
+                )
+            }
+            var stroke = stroke(through: positions, color: InkColor.black, lineWidth: 3)
+            stroke.problemNodeID = problemNodeID
+            return stroke
+        }
     }
 
     private static func sineStroke(color: SIMD4<Float>, phase: CGFloat) -> Stroke {

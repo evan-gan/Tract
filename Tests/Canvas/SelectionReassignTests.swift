@@ -59,7 +59,7 @@ struct SelectionReassignTests {
     @Test("Reassigning closes the menu but keeps the selection")
     func reassignClosesMenuAndKeepsSelection() {
         let (viewModel, _, second) = canvasWithTwoProblems()
-        viewModel.handleSelectionTap(at: CGPoint(x: 40, y: 40))
+        viewModel.handleCanvasTap(at: CGPoint(x: 40, y: 40))
         viewModel.reassignSelection(toProblemNode: second)
 
         #expect(viewModel.isSelectionMenuVisible == false)

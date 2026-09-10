@@ -204,6 +204,13 @@ final class ProblemTaggingModel {
         select(path, changedLevel: max(path.count - 1, 0))
     }
 
+    /// Points the picker at nothing, so new ink goes untagged again — what
+    /// tapping the blank paper outside every problem's region means.
+    func clearSelection() {
+        guard !selectedPath.isEmpty else { return }
+        select([], changedLevel: 0)
+    }
+
     func selectNode(_ nodeID: UUID) {
         guard let path = outline.path(ofNode: nodeID) else { return }
         select(path)

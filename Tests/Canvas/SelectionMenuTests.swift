@@ -20,7 +20,7 @@ struct SelectionMenuTests {
     @Test("Tapping the selection opens the action menu at the tap")
     func tapOnSelectionOpensMenu() {
         let viewModel = canvasWithSelectedLine()
-        viewModel.handleSelectionTap(at: CGPoint(x: 40, y: 40))
+        viewModel.handleCanvasTap(at: CGPoint(x: 40, y: 40))
 
         #expect(viewModel.isSelectionMenuVisible)
         #expect(viewModel.selectionMenuAnchor == CGPoint(x: 40, y: 40))
@@ -29,8 +29,8 @@ struct SelectionMenuTests {
     @Test("Tapping the selection again closes the menu")
     func secondTapClosesMenu() {
         let viewModel = canvasWithSelectedLine()
-        viewModel.handleSelectionTap(at: CGPoint(x: 40, y: 40))
-        viewModel.handleSelectionTap(at: CGPoint(x: 40, y: 40))
+        viewModel.handleCanvasTap(at: CGPoint(x: 40, y: 40))
+        viewModel.handleCanvasTap(at: CGPoint(x: 40, y: 40))
 
         #expect(viewModel.isSelectionMenuVisible == false)
     }
@@ -38,7 +38,7 @@ struct SelectionMenuTests {
     @Test("Tapping off the selection drops it instead of offering a menu")
     func tapOffSelectionDeselects() {
         let viewModel = canvasWithSelectedLine()
-        viewModel.handleSelectionTap(at: CGPoint(x: 900, y: 900))
+        viewModel.handleCanvasTap(at: CGPoint(x: 900, y: 900))
 
         #expect(viewModel.hasSelection == false)
         #expect(viewModel.isSelectionMenuVisible == false)
@@ -47,7 +47,7 @@ struct SelectionMenuTests {
     @Test("A tap with nothing selected does nothing")
     func tapWithoutSelectionDoesNothing() {
         let viewModel = CanvasViewModel()
-        viewModel.handleSelectionTap(at: CGPoint(x: 40, y: 40))
+        viewModel.handleCanvasTap(at: CGPoint(x: 40, y: 40))
 
         #expect(viewModel.isSelectionMenuVisible == false)
     }
@@ -55,7 +55,7 @@ struct SelectionMenuTests {
     @Test("Dropping the selection takes the menu with it")
     func clearingSelectionClosesMenu() {
         let viewModel = canvasWithSelectedLine()
-        viewModel.handleSelectionTap(at: CGPoint(x: 40, y: 40))
+        viewModel.handleCanvasTap(at: CGPoint(x: 40, y: 40))
         viewModel.clearSelection()
 
         #expect(viewModel.isSelectionMenuVisible == false)
@@ -87,7 +87,7 @@ struct SelectionMenuTests {
     @Test("A drag closes a menu that was already open")
     func dragClosesAnOpenMenu() {
         let viewModel = canvasWithSelectedLine()
-        viewModel.handleSelectionTap(at: CGPoint(x: 40, y: 40))
+        viewModel.handleCanvasTap(at: CGPoint(x: 40, y: 40))
 
         viewModel.beginSelectionDrag(at: CGPoint(x: 40, y: 40))
         viewModel.updateSelectionDrag(to: CGPoint(x: 140, y: 40))
@@ -126,7 +126,7 @@ struct SelectionMenuTests {
     @Test("A delete leaves nothing selected and no menu on screen")
     func deleteClearsSelectionAndMenu() {
         let viewModel = canvasWithSelectedLine()
-        viewModel.handleSelectionTap(at: CGPoint(x: 40, y: 40))
+        viewModel.handleCanvasTap(at: CGPoint(x: 40, y: 40))
         viewModel.deleteSelection()
 
         #expect(viewModel.hasSelection == false)
