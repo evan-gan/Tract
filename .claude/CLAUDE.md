@@ -29,8 +29,10 @@ be opened.** Everything below runs headless from the shell.
 # Build signed and install on a connected, unlocked iPad
 ./scripts/deploy-device.sh [DEVICE-UDID]
 
-# Unit + UI tests on an iPad simulator
+# Unit + UI tests on an iPad simulator (~5 min)
 ./scripts/test.sh ["iPad Pro 11-inch (M5)"]
+TEST_WORKERS=1 ./scripts/test.sh    # serial, if a parallel run is hiding a failure
+TEST_SNAPSHOTS=1 ./scripts/test.sh  # also run CanvasSnapshotUITests (normally skipped)
 
 # Screenshot a screen on a simulator — light, dark, or both
 ./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportpicker|sharesheet|problempicker]
@@ -38,6 +40,36 @@ be opened.** Everything below runs headless from the shell.
 
 `scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
 produces nothing installable. Use `deploy-device.sh` to actually run it on hardware.
+
+## Why the test suite is as fast as it is
+
+Measured on an iPad Pro 11-inch (M5) simulator: the suite is **~92% UI tests**.
+496 unit tests run in 45s; 39 UI tests took 532s, because XCTest relaunches the
+app for every test method and that launch alone is ~6.5s a test. Optimising unit
+tests here is wasted effort — every win is in UI-test count, launches, and fixed
+`Thread.sleep`s.
+
+Two settings in `test.sh` cut a warm run from 679s to **305s**, neither of which
+drops an assertion:
+
+- `-parallel-testing-worker-count 2`. Two is deliberate. Three measured the same
+  (308s) and four was *worse* — the clones contend hard enough that each test's
+  own duration roughly doubles, eating the parallel win. Do not raise it without
+  re-measuring.
+- `-skip-testing:TractUITests/CanvasSnapshotUITests`. Those eight tests only
+  navigate and call `attachScreenshot`; `screenshot.sh` runs them on demand,
+  which is the only time the pictures are wanted. They cost 101s serial.
+  **The target name must be `TractUITests` (from `project.yml`)** — xcodebuild
+  silently ignores a `-skip-testing:` identifier it cannot match, so a typo here
+  looks like it works and skips nothing.
+
+Still on the table if the suite needs to get faster, but each costs something:
+`pinchRepeatedly(times: 8)` in `CanvasZoomUITests` is ~16s per test and three
+tests replay it, and the fixed sleeps in `ProblemPickerUITests` are ~11s static
+plus more inside the per-row helpers.
+
+To re-measure, pass `-resultBundlePath` and read per-test durations out with
+`xcrun xcresulttool get test-results tests --path <bundle> --format json`.
 
 ## Seeing a UI change without Xcode
 
