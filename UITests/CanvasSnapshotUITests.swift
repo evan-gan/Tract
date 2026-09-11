@@ -72,10 +72,11 @@ final class CanvasSnapshotUITests: XCTestCase {
 
     /// The layout is a remembered preference, so the shot has to say which one it
     /// wants; `UserDefaults` reads launch arguments before stored values.
-    private func launchSeededLibrary(viewMode: String) -> XCUIApplication {
+    private func launchSeededLibrary(viewMode: String, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments.append("-TractSeedSampleDocuments")
         app.launchArguments += ["-libraryViewMode", viewMode]
+        app.launchArguments += extraArguments
         app.launch()
 
         XCTAssertTrue(app.buttons["New document"].firstMatch.waitForExistence(timeout: 15),
@@ -113,6 +114,40 @@ final class CanvasSnapshotUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 2.5)
 
         attachScreenshot(named: "exportpicker")
+    }
+
+    /// Captures the spinner the picker shows while a pick renders.
+    ///
+    /// The seeded drawings render in milliseconds, which is far too fast to
+    /// photograph, so the app is launched with `-TractSlowExport`: it holds each
+    /// stage for a beat on the rendering thread. A real worksheet of a full
+    /// canvas takes that long on its own.
+    func testCaptureExportProgress() {
+        let app = launchSeededLibrary(viewMode: "grid", extraArguments: ["-TractSlowExport"])
+
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Wave study'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15),
+                      "The seeded library should contain the Wave study drawing.")
+        card.tap()
+
+        let exportButton = app.buttons["Export"].firstMatch
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
+                      "The canvas should offer an Export button.")
+        exportButton.tap()
+
+        let worksheetOption = app.buttons["exportOption-problemWorksheet-pdf"].firstMatch
+        XCTAssertTrue(worksheetOption.waitForExistence(timeout: 10),
+                      "The export picker should offer the problem worksheet as a PDF.")
+        worksheetOption.tap()
+
+        let progress = app.descendants(matching: .any)["exportProgress"].firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 5),
+                      "Picking a format should put progress on screen while it renders.")
+        // Long enough for the sheet to finish resizing around the spinner and for
+        // the run to be past "Preparing", which is the least interesting stage.
+        Thread.sleep(forTimeInterval: 1.5)
+
+        attachScreenshot(named: "exportprogress")
     }
 
     /// Captures the share sheet an export ends at.

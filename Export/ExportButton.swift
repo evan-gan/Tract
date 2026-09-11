@@ -9,7 +9,8 @@ import SwiftUI
 ///
 /// It owns the whole flow — present, render, share, report failures — rather
 /// than reporting a tap upwards, so the canvas does not have to carry share-sheet
-/// and error state it has no other use for.
+/// and error state it has no other use for. The sequencing of that flow lives in
+/// `ExportSession`; this view is the button and the presentations.
 struct ExportButton: View {
     /// Snapshots the document at the moment a format is chosen, not on every
     /// canvas redraw. The document carries every stroke, so taking it as a value
@@ -26,22 +27,16 @@ struct ExportButton: View {
     /// alternative is re-picking it on every single export.
     @AppStorage("exportIncludesFolderPath") private var includesFolderPath = false
 
-    @State private var isPickerPresented = false
-    /// What the picker was dismissed with. The export runs on the picker's
-    /// *dismissal*, not on the tap: a share sheet raised while another sheet is
-    /// still on screen either does not appear or comes up empty.
-    @State private var pendingChoice: ExportChoice?
-
-    /// Both presentations are driven by an optional value rather than by a
-    /// separate boolean. A boolean flipped in the same update as the value it
-    /// depends on lets SwiftUI present before the value lands, which showed an
-    /// empty sheet with nothing in it on the first export of a session.
-    @State private var exportedItem: ExportedFileItem?
-    @State private var exportFailure: ExportFailure?
+    /// Holds the picker, the run in flight and the finished file. The share sheet
+    /// is still driven by an optional value rather than a separate boolean: a
+    /// boolean flipped in the same update as the value it depends on lets SwiftUI
+    /// present before the value lands, which showed an empty sheet with nothing
+    /// in it on the first export of a session.
+    @State private var session = ExportSession()
 
     var body: some View {
         Button {
-            isPickerPresented = true
+            session.presentPicker()
         } label: {
             Label("Export", systemImage: "square.and.arrow.up")
                 .labelStyle(.titleAndIcon)
@@ -58,26 +53,24 @@ struct ExportButton: View {
         // Both sheets are presented from inside the bar's glass and have their
         // appearance stamped explicitly rather than inherited: see
         // `systemColorScheme`.
-        .sheet(isPresented: $isPickerPresented, onDismiss: runPendingExport) {
+        .sheet(isPresented: $session.isPickerPresented, onDismiss: { session.pickerDismissed() }) {
             ExportPickerView(
                 folderPath: folderPath,
                 includesFolderPath: $includesFolderPath,
-                onPick: { layout, format in
-                    pendingChoice = ExportChoice(layout: layout, format: format)
-                    isPickerPresented = false
-                },
-                onCancel: { isPickerPresented = false }
+                runningExport: session.runningExport,
+                onPick: startExport,
+                onCancel: { session.cancel() }
             )
             .environment(\.colorScheme, Self.systemColorScheme)
         }
-        .sheet(item: $exportedItem) { item in
+        .sheet(item: $session.exportedItem) { item in
             ShareSheet(items: [item.url])
                 .environment(\.colorScheme, Self.systemColorScheme)
         }
         .alert(
             "Export failed",
             isPresented: isPresentingFailure,
-            presenting: exportFailure
+            presenting: session.failure
         ) { _ in
             Button("OK", role: .cancel) {}
         } message: { failure in
@@ -89,29 +82,22 @@ struct ExportButton: View {
     /// its own, so the failure text can never lag a beat behind the flag.
     private var isPresentingFailure: Binding<Bool> {
         Binding(
-            get: { exportFailure != nil },
-            set: { isPresented in if !isPresented { exportFailure = nil } }
+            get: { session.failure != nil },
+            set: { isPresented in if !isPresented { session.failure = nil } }
         )
     }
 
-    /// Runs the pick the picker closed with, if it closed with one — a cancelled
-    /// sheet leaves nothing pending and exports nothing.
-    private func runPendingExport() {
-        guard let choice = pendingChoice else { return }
-        pendingChoice = nil
-
-        do {
-            exportedItem = ExportedFileItem(
-                url: try ExportRunner.writeExport(
-                    of: makeDocument(),
-                    layout: choice.layout,
-                    format: choice.format,
-                    folderPath: includesFolderPath ? folderPath : []
-                )
+    /// Hands the pick to the session, snapshotting the document at this moment —
+    /// the only moment the whole drawing needs to be copied.
+    private func startExport(layout: ExportLayout, format: ExportFormat) {
+        session.export(
+            ExportRequest(
+                document: makeDocument(),
+                layout: layout,
+                format: format,
+                folderPath: includesFolderPath ? folderPath : []
             )
-        } catch {
-            exportFailure = ExportFailure(message: error.localizedDescription)
-        }
+        )
     }
 
     /// The appearance the *device* is in, asked of the window rather than
@@ -134,22 +120,6 @@ struct ExportButton: View {
         let window = activeScene?.keyWindow ?? activeScene?.windows.first
         return window?.traitCollection.userInterfaceStyle == .dark ? .dark : .light
     }
-}
-
-/// One picked export: what goes on the page, and the file it is written as.
-private struct ExportChoice {
-    let layout: ExportLayout
-    let format: ExportFormat
-}
-
-private struct ExportedFileItem: Identifiable {
-    let url: URL
-    var id: URL { url }
-}
-
-private struct ExportFailure: Identifiable {
-    let message: String
-    var id: String { message }
 }
 
 /// Wraps `UIActivityViewController` for sharing a file URL.

@@ -7,7 +7,7 @@ Infinite canvas vector note-taking app for iPad. Every stroke stores full Apple 
 ```bash
 ./scripts/build.sh                    # compile / type-check, unsigned
 ./scripts/test.sh                     # unit + UI tests on an iPad simulator (~5 min)
-./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportpicker|sharesheet|problempicker]
+./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportpicker|exportprogress|sharesheet|problempicker]
 ./scripts/deploy-device.sh            # signed build installed on a connected iPad
 xcodegen generate                     # after editing project.yml
 ```
@@ -107,7 +107,7 @@ Tract/
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails, folder tree + filing
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, ProblemRegion padding/bridging, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
-│   ├── Export/                   # Layout/format catalogue, the export runner, paper geometry, ink fitting, problem grouping, PDF output, raw JSON data export
+│   ├── Export/                   # Layout/format catalogue, the export runner and its stage reporting, the session's sequencing, paper geometry, ink fitting, problem grouping, PDF output, raw JSON data export
 │   │   └── Worksheet/            # Hulls, thinning, badges, packing, growth, separators, block building
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
@@ -179,9 +179,12 @@ Tract/
 ├── Export/
 │   ├── ExportAdapter.swift       # Protocol all exporters conform to
 │   ├── ExportLayout.swift        # The catalogue the picker is built from: ExportFormat (pdf/svg/png/json) and ExportLayout (whole drawing / problem worksheet / raw capture) → the adapter for each offered pairing
-│   ├── ExportRunner.swift        # Picked layout + format → rendered, named file on disk (no view involved)
+│   ├── ExportRunner.swift        # Picked layout + format → rendered, named file on disk (no view involved); `runExport` is the off-main-thread wrapper that reports stages
+│   ├── ExportSession.swift       # The flow: picker up → render → picker down → share sheet. Holds the running export, the finished file and the failure
+│   ├── ExportProgress.swift      # `ExportStage` (preparing / rendering / writing) and the wording the picker shows for one
+│   ├── ExportProgressView.swift  # Spinner + stage line + "Step n of 3", shown in place of the options while a pick renders
 │   ├── ExportButton.swift        # Filled capsule on the bar; opens the picker, then shares what it was asked for
-│   ├── ExportPickerView.swift    # The picker sheet: one card per layout, its formats inside, folder-path toggle last; sized to its contents
+│   ├── ExportPickerView.swift    # The picker sheet: one card per layout, its formats inside, folder-path toggle last; sized to its contents. Swaps to progress once a format is picked
 │   ├── ExportGroupCard.swift     # One titled card + its row divider — the grouped-list look, without a scroll view
 │   ├── ExportFormatRow.swift     # One pickable format: icon, name, what the file is, its extension
 │   ├── ExportFileNaming.swift    # Document title (+ optional folder path prefix) → safe file name
@@ -1158,20 +1161,39 @@ The pieces:
   plus a `Tests/Export/ExportLayoutTests` run, which checks every offered pairing
   resolves to an adapter and that the caption's extension is the one actually
   written. The picker renders whatever is here, in declaration order.
-- `ExportRunner.writeExport(of:layout:format:folderPath:into:)` — render, name,
-  write, hand back a URL. No view, so `Tests/Export/ExportRunnerTests` can run
-  every pairing the picker offers end to end.
-- `ExportButton.swift` — the capsule on the bar. It owns the whole flow, so the
+- `ExportRunner.writeExport(of:layout:format:folderPath:into:onStage:)` — render,
+  name, write, hand back a URL. No view, so `Tests/Export/ExportRunnerTests` can
+  run every pairing the picker offers end to end.
+  `ExportRunner.runExport(_:onStage:)` is the async wrapper the app uses: it runs
+  that work on a detached task and reports each stage back on the main actor.
+- `ExportSession.swift` — the flow: picker up, render, picker down, share sheet.
+  `@MainActor @Observable`, and injectable (`ExportWork`), so
+  `Tests/Export/ExportSessionTests` drives a run stage by stage without
+  rendering anything.
+- `ExportButton.swift` — the capsule on the bar. It owns the presentations; the
   canvas carries no share-sheet or error state.
 - `ExportPickerView.swift` + `ExportGroupCard` + `ExportFormatRow` — the sheet.
+- `ExportProgress.swift` + `ExportProgressView.swift` — the spinner and the line
+  that says what the run is doing.
 
-Two things in the sheet that are the way they are on purpose:
+Three things in the sheet that are the way they are on purpose:
 
-- **The export runs on the picker's *dismissal*, not on the tap.** The pick lands
-  in `pendingChoice`, the sheet closes, and `onDismiss` renders and raises the
-  share sheet. A share sheet presented while another sheet is still on screen
-  either does not appear or comes up empty. A cancel leaves nothing pending, and
-  `ExportShareSheetUITests.testCancellingThePickerExportsNothing` holds that.
+- **The picker stays up while the file renders.** Picking a format swaps the
+  option cards for `ExportProgressView`: a spinner, the stage
+  (`Preparing the whole drawing…` → `Rendering…` → `Writing the PDF file…`) and
+  "Step n of 3". The stages are coarse because every exporter renders in one
+  opaque call — there is no fraction to put behind a progress bar, so an
+  indeterminate spinner is the honest control. The render itself is on a detached
+  task; before that it ran on the main thread on the picker's dismissal, which
+  froze the app with nothing on screen to explain why.
+- **The share sheet is raised only once the picker has gone.** The finished URL
+  is held in the session until `pickerDismissed()`. A share sheet presented while
+  another sheet is still on screen either does not appear or comes up empty. A
+  cancel — the button, or swiping the sheet away mid-render — drops the result
+  instead, and `ExportShareSheetUITests.testCancellingThePickerExportsNothing`
+  holds that. The render underneath cannot be interrupted (one synchronous
+  CoreGraphics call), so a cancelled run finishes unwatched into the temporary
+  directory.
 - **It is hand-built cards, not a `List`.** The sheet is sized to its contents
   with `.presentationSizing(.form.fitted(horizontal: false, vertical: true))` so
   every option is visible at a glance — and a list is a scroll view, which has no
@@ -1182,6 +1204,11 @@ Rows carry `exportOption-<layout>-<format>` identifiers (`exportOption-wholeDraw
 `exportOption-problemWorksheet-pdf`, `exportOption-rawCapture-json`) — the same
 format appears under more than one layout, so a label alone cannot name a row.
 `./scripts/screenshot.sh both "" exportpicker` is the shot.
+`./scripts/screenshot.sh both "" exportprogress` is the one of the spinner — it
+launches with `-TractSlowExport`, a DEBUG-only argument that makes
+`ExportRunner` hold each stage for 1.2s on the rendering thread. The seeded
+sample drawings render in milliseconds, so there is otherwise nothing to
+photograph.
 
 ---
 

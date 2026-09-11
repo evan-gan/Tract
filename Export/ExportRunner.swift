@@ -17,6 +17,8 @@ enum ExportRunner {
     ///     first. Empty means no prefix.
     ///   - directory: Where the file lands. Defaults to the temporary directory,
     ///     which is what a share sheet wants.
+    ///   - onStage: Called as each stage begins, on whatever thread the export is
+    ///     running on.
     /// - Returns: The URL of the written file.
     /// - Throws: `ExportError.unsupportedFormat` when the layout does not offer
     ///   the format, whatever the exporter throws, or a file-system error.
@@ -25,13 +27,18 @@ enum ExportRunner {
         layout: ExportLayout,
         format: ExportFormat,
         folderPath: [String] = [],
-        into directory: URL = FileManager.default.temporaryDirectory
+        into directory: URL = FileManager.default.temporaryDirectory,
+        onStage: (ExportStage) -> Void = { _ in }
     ) throws -> URL {
+        onStage(.preparing)
         guard let adapter = layout.adapter(for: format) else {
             throw ExportError.unsupportedFormat(layout: layout.name, format: format.displayName)
         }
 
+        onStage(.rendering)
         let data = try adapter.export(document: document, viewport: nil)
+
+        onStage(.writingFile)
         let fileName = ExportFileNaming.fileName(
             title: document.title + adapter.fileNameSuffix,
             folderPath: folderPath,
@@ -41,4 +48,52 @@ enum ExportRunner {
         try data.write(to: destination)
         return destination
     }
+
+    /// Renders a picked export off the main thread, reporting each stage back on
+    /// the main actor as it starts.
+    ///
+    /// Detached rather than awaited in place because the work underneath is
+    /// entirely synchronous CoreGraphics: run on the main thread, a worksheet of
+    /// a full canvas is seconds of frozen sheet — no spinner turning, nothing to
+    /// say the app is still alive.
+    ///
+    /// - Parameters:
+    ///   - request: What to export and how to name it.
+    ///   - onStage: Called on the main actor as each stage begins.
+    /// - Returns: The URL of the written file, in the temporary directory.
+    static func runExport(
+        _ request: ExportRequest,
+        onStage: @escaping @MainActor @Sendable (ExportStage) -> Void
+    ) async throws -> URL {
+        let reportStage: @Sendable (ExportStage) -> Void = { stage in
+            Task { @MainActor in onStage(stage) }
+            #if DEBUG
+            // Sleeps the render, not the main thread, so the picker keeps
+            // animating — see `debugStageDelay`.
+            if let debugStageDelay { Thread.sleep(forTimeInterval: debugStageDelay) }
+            #endif
+        }
+
+        return try await Task.detached(priority: .userInitiated) {
+            try writeExport(
+                of: request.document,
+                layout: request.layout,
+                format: request.format,
+                folderPath: request.folderPath,
+                onStage: reportStage
+            )
+        }.value
+    }
+
+    #if DEBUG
+    /// How long each stage is held when the app is launched with
+    /// `-TractSlowExport`, in seconds; nil when it is not.
+    ///
+    /// The sample documents a UI test can reach render in milliseconds, so the
+    /// picker's progress is gone before a screenshot can be taken of it — there
+    /// is otherwise no way to look at that screen. Documents people actually draw
+    /// take long enough on their own.
+    private static let debugStageDelay: TimeInterval? =
+        ProcessInfo.processInfo.arguments.contains("-TractSlowExport") ? 1.2 : nil
+    #endif
 }

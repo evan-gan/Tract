@@ -35,7 +35,7 @@ TEST_WORKERS=1 ./scripts/test.sh    # serial, if a parallel run is hiding a fail
 TEST_SNAPSHOTS=1 ./scripts/test.sh  # also run CanvasSnapshotUITests (normally skipped)
 
 # Screenshot a screen on a simulator — light, dark, or both
-./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportpicker|sharesheet|problempicker]
+./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportpicker|exportprogress|sharesheet|problempicker]
 ```
 
 `scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
@@ -78,11 +78,15 @@ simulator, sets its light/dark appearance, runs the capture test in
 `UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
 into `build/screenshots/<screen>-<appearance>.png` — read that file to see the change.
 
-Seven screens are wired up: `canvas` (the default), `library` (the document grid),
+Eight screens are wired up: `canvas` (the default), `library` (the document grid),
 `librarylist` (the outline, with a folder expanded), `folder` (inside a folder,
 where the breadcrumb lives), `exportpicker` (the export sheet, which the canvas shot cannot show
 because only the button is on the bar — it opens the *filed* sample document, so
-the folder-path naming toggle is in the shot as well), `sharesheet` (the system
+the folder-path naming toggle is in the shot as well), `exportprogress` (the
+spinner the picker shows while a pick renders — it launches with
+`-TractSlowExport`, which makes `ExportRunner` hold each stage for 1.2s on the
+rendering thread, because the sample drawings render far too fast to photograph),
+`sharesheet` (the system
 share sheet an export ends at — worth its own shot because it is presented from
 inside the bar's glass, which rewrites the appearance of what it hosts), and
 `problempicker` (the problem wheel with a tree in it — a fresh canvas shows only

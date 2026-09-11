@@ -94,6 +94,42 @@ struct ExportRunnerTests {
         }
     }
 
+    @Test("A run reports its stages in order, so the picker's spinner tracks real work")
+    func reportsStagesInOrder() throws {
+        let directory = try TemporaryDirectory()
+        var stages: [ExportStage] = []
+
+        _ = try ExportRunner.writeExport(
+            of: document(titled: "Set 3"),
+            layout: .wholeDrawing,
+            format: .pdf,
+            into: directory.url,
+            onStage: { stages.append($0) }
+        )
+
+        #expect(stages == [.preparing, .rendering, .writingFile])
+    }
+
+    @Test("A run that throws stops reporting where it failed")
+    func stopsReportingAtTheFailedStage() throws {
+        let directory = try TemporaryDirectory()
+        var stages: [ExportStage] = []
+
+        #expect(throws: ExportError.self) {
+            try ExportRunner.writeExport(
+                of: document(titled: "Set 3"),
+                layout: .problemWorksheet,
+                format: .png,
+                into: directory.url,
+                onStage: { stages.append($0) }
+            )
+        }
+
+        // An unsupported pairing fails before anything is rendered, so the picker
+        // must never have claimed it was rendering.
+        #expect(stages == [.preparing])
+    }
+
     // MARK: - Fixtures
 
     private func document(titled title: String) -> SplineDocument {
