@@ -156,10 +156,12 @@ final class CanvasViewModel {
         strokes loadedStrokes: [Stroke],
         outline: ProblemOutline,
         origin: CGPoint,
-        scale: CGFloat
+        scale: CGFloat,
+        background: CanvasBackgroundStyle = .dots
     ) {
         strokes = loadedStrokes
         problems.restore(outline: outline)
+        backgroundStyle = background
         activeStroke = nil
         undoStack.removeAll()
         redoStack.removeAll()
@@ -167,6 +169,27 @@ final class CanvasViewModel {
         canvasTransform.scale = scale
         canvasTransform.translation = origin
         revision = 0
+    }
+
+    // MARK: - Paper
+
+    /// The sheet the document is drawn on. Document content, not a view setting:
+    /// changing it records an edit so the choice is autosaved with the ink.
+    private(set) var backgroundStyle: CanvasBackgroundStyle = .dots
+
+    /// Switches the paper, moving the pen off an ink colour the new sheet would
+    /// swallow — black on blueprint, white on anything pale. Only those two
+    /// defaults are touched; a colour the user picked deliberately is left alone.
+    func selectBackgroundStyle(_ style: CanvasBackgroundStyle) {
+        guard style != backgroundStyle else { return }
+        let wasLightInk = backgroundStyle.needsLightInk
+        backgroundStyle = style
+        if style.needsLightInk, strokeColor == InkColor.black {
+            selectInkColor(InkColor.white)
+        } else if wasLightInk, !style.needsLightInk, strokeColor == InkColor.white {
+            selectInkColor(InkColor.black)
+        }
+        recordEdit()
     }
 
     // MARK: - Tool state
@@ -340,18 +363,29 @@ final class CanvasViewModel {
     // rather than in the buttons that trigger them.
     var isColorPanelVisible: Bool = false
     var isStrokeWeightFlyoutVisible: Bool = false
+    var isPaperStyleFlyoutVisible: Bool = false
 
     func toggleColorPanel() {
-        withAnimation(.spring(duration: 0.3)) {
-            isStrokeWeightFlyoutVisible = false
-            isColorPanelVisible.toggle()
-        }
+        toggleFlyout(\.isColorPanelVisible)
     }
 
     func toggleStrokeWeightFlyout() {
+        toggleFlyout(\.isStrokeWeightFlyoutVisible)
+    }
+
+    func togglePaperStyleFlyout() {
+        toggleFlyout(\.isPaperStyleFlyoutVisible)
+    }
+
+    /// Opens one flyout and shuts the rest — two popovers from the same dock at
+    /// once would fight over the same corner of the screen.
+    private func toggleFlyout(_ flyout: ReferenceWritableKeyPath<CanvasViewModel, Bool>) {
         withAnimation(.spring(duration: 0.3)) {
+            let opening = !self[keyPath: flyout]
             isColorPanelVisible = false
-            isStrokeWeightFlyoutVisible.toggle()
+            isStrokeWeightFlyoutVisible = false
+            isPaperStyleFlyoutVisible = false
+            self[keyPath: flyout] = opening
         }
     }
 

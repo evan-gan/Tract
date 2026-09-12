@@ -11,7 +11,8 @@ struct CanvasContentLayer: View {
 
     var body: some View {
         ZStack {
-            CanvasBackgroundView(transform: viewModel.canvasTransform)
+            CanvasBackgroundView(style: viewModel.backgroundStyle,
+                                 transform: viewModel.canvasTransform)
             // Above the paper and *under* the ink: the region is a marking on
             // the page, so nothing it is drawn over — the handwriting it frames
             // least of all — may be tinted or crossed by it.

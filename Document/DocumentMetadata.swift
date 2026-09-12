@@ -15,7 +15,9 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     /// timing — the part the raw-data export exists for — stripped out.
     /// 4 added `folderID`: an older build would open a filed document and save
     /// it back at the top level, silently emptying the user's folders.
-    static let currentSchemaVersion = 4
+    /// 5 added `backgroundStyle`: an older build would open a ruled or blueprint
+    /// document as dot grid and save that choice away.
+    static let currentSchemaVersion = 5
 
     var schemaVersion: Int
     let id: UUID
@@ -41,6 +43,9 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     ///
     /// Optional so documents written before folders existed still load.
     var folderID: UUID?
+    /// The paper the document is drawn on. Optional so documents written before
+    /// paper styles existed still load; `nil` means the original dot grid.
+    var backgroundStyle: CanvasBackgroundStyle?
 
     init(
         id: UUID = UUID(),
@@ -51,7 +56,8 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
         canvasOrigin: CGPoint = .zero,
         canvasScale: CGFloat = 1.0,
         problemOutline: ProblemOutline? = nil,
-        folderID: UUID? = nil
+        folderID: UUID? = nil,
+        backgroundStyle: CanvasBackgroundStyle? = nil
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.id = id
@@ -63,5 +69,6 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
         self.canvasScale = canvasScale
         self.problemOutline = problemOutline
         self.folderID = folderID
+        self.backgroundStyle = backgroundStyle
     }
 }

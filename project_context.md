@@ -61,8 +61,11 @@ Tract/
 │   ├── PencilHoverDot.swift      # The hover dot as a CALayer — moved inside the hover callback, not by SwiftUI
 │   ├── PencilHoverDotView.swift  # Hosts that layer above the selection chrome, on the canvas view's own frame
 │   ├── CanvasZoomIndicator.swift # The zoom pill, wired to the live scale and the fit-to-drawing action
-│   ├── CanvasBackgroundView.swift # White paper + dot grid, both tracking the transform
-│   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, pan phase
+│   ├── CanvasBackgroundView.swift # The sheet under the ink, in the document's paper style, tracking the transform
+│   ├── CanvasBackgroundStyle.swift # The paper catalogue: dot grid, blank, graph, ruled, legal pad, blueprint + the palette
+│   ├── CanvasPaperPainter.swift  # Draws one sheet into a GraphicsContext — shared by the canvas and the picker swatches
+│   ├── CanvasPaperSwatch.swift   # A paper thumbnail, painted by that same painter
+│   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, line width, pan phase, heavy-line rhythm
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
 │   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–400%, screen↔canvas conversion, visible rect, `fitting(_:inViewOfSize:padding:)`
 │
@@ -84,6 +87,8 @@ Tract/
 │   ├── DockColorRail.swift       # Quick ink colours + colour-wheel button
 │   ├── StrokeWeightDockButton.swift  # Opens the weight picker popover
 │   ├── StrokeWeightFlyout.swift  # 5-option weight picker (popover content)
+│   ├── PaperStyleDockButton.swift # Swatch of the current paper; opens the paper picker popover
+│   ├── PaperStyleFlyout.swift    # The paper picker: a swatch per style (popover content)
 │   └── UndoRedoView.swift        # Undo + redo, leading end of the dock
 │
 ├── ColorPanel/                   # Full colour panel (popover from the dock's wheel)
@@ -112,6 +117,7 @@ Tract/
 │   └── ToolDock/                 # Dock quadrant maths + ink selection rules
 ├── UITests/                      # XCUITest
 │   ├── ToolDockDragUITests.swift # The dock's drag/snap gesture
+│   ├── PaperStyleUITests.swift   # The paper picker: a pick sticks, and survives closing the document
 │   ├── CanvasZoomUITests.swift   # Pinch limits, read back off the zoom pill
 │   ├── ProblemPickerUITests.swift # Wheel rows tapped, the dash, flicking a column
 │   ├── ExportShareSheetUITests.swift # Each layout/format in the export picker reaches a share sheet; cancelling exports nothing
@@ -1065,12 +1071,43 @@ zoom. `CanvasZoomUITests` drives real pinches and reads the result off the zoom 
 
 ---
 
-## The paper's dot grid
+## The paper and its styles
 
-`CanvasBackgroundView` draws the white sheet and its dots, and the dots live at fixed
-**canvas** coordinates — they pan and zoom with the ink, so zooming magnifies the
-paper instead of sliding the drawing across a static backdrop. The maths is in
-`CanvasGrid`, kept pure and unit-tested:
+`CanvasBackgroundView` draws the sheet the document is set to, and the pattern lives at
+fixed **canvas** coordinates — it pans and zooms with the ink, so zooming magnifies the
+paper instead of sliding the drawing across a static backdrop.
+
+Six papers ship, catalogued in `CanvasBackgroundStyle`: `dots` (the default and the
+app's original paper), `blank`, `grid`, `ruled`, `legalPad` and `blueprint`. A style is
+only a palette entry — a sheet colour plus a `CanvasPaperPattern` (`blank`, `dots`,
+`grid` with a heavy line every *n* cells, or `ruled` with an optional margin rule) — so
+a new paper is a case and a colour, never a new branch in the renderer.
+
+Things worth knowing:
+
+- **The picker's swatches are painted by the same code as the canvas.**
+  `CanvasPaperPainter.paint(style:transform:size:in:)` is the one entry point;
+  `CanvasPaperSwatch` calls it with a zoomed-out transform. The swatch cannot drift
+  from the sheet it advertises.
+- **The paper is document content, not a view setting.** It is stored on
+  `DocumentMetadata.backgroundStyle` (optional — `nil` means dot grid, which is what
+  every document written before schema 5 carries), picking one calls
+  `CanvasViewModel.selectBackgroundStyle` which records an edit, and
+  `DocumentEditorSession` writes it with the rest of the metadata. The raw values are
+  on disk: never rename a case.
+- **Picking a dark sheet moves the pen off black.** `needsLightInk` is true only for
+  the blueprint; switching to it turns *default* black ink white, and switching away
+  turns default white ink back to black. A colour the user chose themselves is never
+  touched.
+- **Thumbnails are drawn on the document's own paper colour** — white ink on a
+  blueprint page would otherwise come back as a blank white library card. The exports
+  deliberately stay on white paper: an exported worksheet is a fresh sheet, not a
+  photograph of the canvas.
+- The ruled papers' margin rule stands on **canvas x = 0**. The canvas is infinite and
+  has no page edge to hang a margin off, so the origin is the page's left edge.
+
+The placement maths is in `CanvasGrid`, kept pure and unit-tested
+(`Tests/Canvas/CanvasGridTests.swift`, `CanvasPaperLineTests.swift`):
 
 - **Zoomed out, the grid coarsens by doubling** rather than drawing every dot. At 10%
   a literal 48pt grid is 4.8pt apart — tens of thousands of dots per screen. Doubling keeps
@@ -1080,6 +1117,11 @@ paper instead of sliding the drawing across a static backdrop. The maths is in
   sub-pixel.
 - Row and column positions come from `firstDotOffset(translation:spacing:)` — the
   pattern repeats every `spacing`, so only its phase inside the first cell matters.
+- Lines use `firstLineIndex(translation:spacing:)` instead, which is the same position
+  carrying its lattice index. Graph paper needs the index: `coarseningFactor(atScale:)`
+  plus `isMajorLine(visibleIndex:coarseningFactor:majorEvery:)` keep the heavy lines on
+  the same canvas coordinates as the grid thins out with the zoom.
+- Line thickness tracks the zoom and is clamped at both ends, exactly like dot radius.
 
 ---
 
@@ -1577,8 +1619,11 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift` |
 | Change how ink weight responds to zoom | `CanvasTransform.toScreen(length:)` |
 | Change the hover preview's look | `PencilHoverDot.swift`; its size and colour come from `CanvasViewModel.pencilPreviewDiameter` / `pencilPreviewColor` |
-| Change canvas background | `CanvasBackgroundView.swift` (white in both colour schemes — it is paper, not chrome) |
-| Change the grid's spacing, density or dot size | `CanvasGrid.swift` |
+| Add a paper style, or re-colour one | A case in `CanvasBackgroundStyle.swift` + its entry in the private `Color` palette at the bottom of that file; the picker, the swatches and the dock button pick it up automatically |
+| Change how a paper is drawn | `CanvasPaperPainter.swift` (one painter for the canvas *and* the picker swatches — they cannot disagree) |
+| Change the paper picker's layout | `PaperStyleFlyout.swift`; the dock button that opens it is `PaperStyleDockButton.swift` |
+| Change what a document opens on, or where its paper is stored | `DocumentMetadata.backgroundStyle` (schema 5, optional → dot grid) and `CanvasViewModel.selectBackgroundStyle` |
+| Change the grid's spacing, density, dot size or line weight | `CanvasGrid.swift` |
 | Change how the canvas is panned, or tune palm rejection | `FingerPanArbiter.swift` for the thresholds and rules; `FingerPanGestureRecognizer.swift` for the touch bookkeeping |
 | Change the zoom limits | `minimumScale` / `maximumScale` in `CanvasTransform.swift` |
 | Change what Apple Pencil's double tap does | `CanvasViewModel.togglePencilShortcutTool()` |

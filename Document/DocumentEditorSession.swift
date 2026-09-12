@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// Owns one open document for as long as the canvas is on screen: it loads the
 /// strokes in, hands them to `CanvasViewModel`, and is the only thing that ever
@@ -92,7 +93,8 @@ final class DocumentEditorSession: Identifiable {
                 strokes: document.strokes,
                 outline: document.problemOutline,
                 origin: document.metadata.canvasOrigin,
-                scale: document.metadata.canvasScale
+                scale: document.metadata.canvasScale,
+                background: document.backgroundStyle
             )
             savedRevision = viewModel.revision
             loadState = .ready
@@ -133,9 +135,11 @@ final class DocumentEditorSession: Identifiable {
         // being an edit to the drawing, so it rides along here with pan and zoom
         // rather than stamping a new modifiedAt on the document.
         let outline = viewModel.problems.outline
+        let background = viewModel.backgroundStyle
         let viewChanged = metadata.canvasOrigin != transform.translation
             || metadata.canvasScale != transform.scale
             || metadata.problemOutline != outline
+            || metadata.backgroundStyle != background
         let revisionBeingSaved = viewModel.revision
         let contentChanged = hasUnsavedChanges || revisionBeingSaved != savedRevision
         guard contentChanged || viewChanged else { return }
@@ -143,6 +147,7 @@ final class DocumentEditorSession: Identifiable {
         metadata.canvasOrigin = transform.translation
         metadata.canvasScale = transform.scale
         metadata.problemOutline = outline
+        metadata.backgroundStyle = background
         // Merely looking at a document — panning, zooming — must not push it to the
         // front of the library as if it had been edited.
         if contentChanged { metadata.modifiedAt = .now }
@@ -150,7 +155,10 @@ final class DocumentEditorSession: Identifiable {
         let document = SplineDocument(metadata: metadata, strokes: viewModel.strokes)
 
         do {
-            try await store.save(document, thumbnail: await thumbnailUpdate(for: document.strokes))
+            try await store.save(
+                document,
+                thumbnail: await thumbnailUpdate(for: document.strokes, paper: background)
+            )
             metadata.strokeCount = document.strokes.count
             savedRevision = revisionBeingSaved
             // An edit made while the write was in flight must not be marked clean.
@@ -165,16 +173,25 @@ final class DocumentEditorSession: Identifiable {
     /// Re-rendering the preview on a view-only save would be wasted work, but an
     /// emptied document must lose its old preview rather than keep advertising
     /// ink that is no longer there.
-    private func thumbnailUpdate(for strokes: [Stroke]) async -> ThumbnailUpdate {
-        guard let data = await renderThumbnail(for: strokes) else { return .remove }
+    private func thumbnailUpdate(
+        for strokes: [Stroke],
+        paper: CanvasBackgroundStyle
+    ) async -> ThumbnailUpdate {
+        guard let data = await renderThumbnail(for: strokes, paper: paper) else { return .remove }
         return .replace(data)
     }
 
     /// Rasterising happens off the main actor: a busy page is thousands of
     /// Bézier segments, and the canvas must not stutter while a save runs.
-    private nonisolated func renderThumbnail(for strokes: [Stroke]) async -> Data? {
+    ///
+    /// The preview is drawn on the document's own paper colour — white ink on a
+    /// blueprint page would otherwise come back as a blank white card.
+    private nonisolated func renderThumbnail(
+        for strokes: [Stroke],
+        paper style: CanvasBackgroundStyle
+    ) async -> Data? {
         await Task.detached(priority: .utility) {
-            ThumbnailRenderer.renderPNG(strokes: strokes)
+            ThumbnailRenderer.renderPNG(strokes: strokes, paperColor: style.sheetUIColor)
         }.value
     }
 }

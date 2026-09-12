@@ -43,6 +43,66 @@ enum CanvasGrid {
         return min(max(scaled, minimumDotRadius), maximumDotRadius)
     }
 
+    /// Ruled and squared papers draw lines on the same lattice the dots sit on,
+    /// so a line is as thick as a dot is wide and the two papers read as the
+    /// same sheet at the same zoom.
+    static let canvasLineWidth: CGFloat = 0.7
+    static let minimumLineWidth: CGFloat = 0.4
+    static let maximumLineWidth: CGFloat = 2
+
+    static func lineWidth(atScale scale: CGFloat) -> CGFloat {
+        let scaled = canvasLineWidth * max(scale, 0)
+        return min(max(scaled, minimumLineWidth), maximumLineWidth)
+    }
+
+    /// How many times the grid has been halved away at this zoom.
+    ///
+    /// `screenSpacing(atScale:)` coarsens by doubling, which means one surviving
+    /// line stands where this many lines of the full-density lattice used to be.
+    /// Squared paper needs that number to keep its heavy lines on the same canvas
+    /// coordinates as the zoom changes.
+    ///
+    /// - Returns: A power of two, at least 1.
+    static func coarseningFactor(atScale scale: CGFloat) -> Int {
+        guard scale > 0 else { return 1 }
+        var spacing = canvasSpacing * scale
+        var factor = 1
+        while spacing < minimumScreenSpacing {
+            spacing *= 2
+            factor *= 2
+        }
+        return factor
+    }
+
+    /// Lattice index of the first line at or after the origin on one axis.
+    ///
+    /// Line `index` sits at `translation + index * spacing` on screen, so drawing
+    /// a viewport is: start here, step by `spacing` until you run off the edge.
+    ///
+    /// - Parameters:
+    ///   - translation: The transform's translation on this axis, in screen points.
+    ///   - spacing: Screen distance between lines, from `screenSpacing(atScale:)`.
+    /// - Returns: The index — negative when the canvas origin is off-screen to
+    ///   the left of (or above) the viewport.
+    static func firstLineIndex(translation: CGFloat, spacing: CGFloat) -> Int {
+        guard spacing > 0 else { return 0 }
+        return Int((-translation / spacing).rounded(.up))
+    }
+
+    /// Whether a visible line is one of the heavy ones.
+    ///
+    /// - Parameters:
+    ///   - visibleIndex: Index of the line among the lines actually drawn, from
+    ///     `firstLineIndex(translation:spacing:)`.
+    ///   - coarseningFactor: From `coarseningFactor(atScale:)`; converts that
+    ///     back into an index on the full-density lattice.
+    ///   - majorEvery: Heavy line every this many full-density cells; zero or
+    ///     less means the paper has no heavy lines at all.
+    static func isMajorLine(visibleIndex: Int, coarseningFactor: Int, majorEvery: Int) -> Bool {
+        guard majorEvery > 0 else { return false }
+        return (visibleIndex * coarseningFactor) % majorEvery == 0
+    }
+
     /// Screen position of the first dot at or after the origin on one axis.
     ///
     /// Dot screen positions are `translation + multiple of spacing`, so the whole

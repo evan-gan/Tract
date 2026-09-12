@@ -14,6 +14,9 @@ struct SplineDocument: Identifiable, Sendable {
     /// The problem tree strokes are tagged against. A document that has never
     /// been tagged has no stored outline, and an empty one means the same thing.
     var problemOutline: ProblemOutline { metadata.problemOutline ?? ProblemOutline() }
+    /// The paper the document is drawn on; documents saved before paper styles
+    /// existed carry none and open on the original dot grid.
+    var backgroundStyle: CanvasBackgroundStyle { metadata.backgroundStyle ?? .dots }
     var title: String { metadata.title }
     var modifiedAt: Date { metadata.modifiedAt }
 

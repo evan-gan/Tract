@@ -26,6 +26,35 @@ final class CanvasSnapshotUITests: XCTestCase {
         attachScreenshot(named: "canvas")
     }
 
+    /// Captures the paper picker over a sheet that is not the default, so the
+    /// shot shows both the swatches and a canvas the choice has been applied to.
+    func testCapturePaperPicker() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let newDocument = app.buttons["New document"].firstMatch
+        XCTAssertTrue(newDocument.waitForExistence(timeout: 15),
+                      "The document list should offer a way to start a drawing.")
+        newDocument.tap()
+
+        let paperButton = app.buttons["paperStyleButton"].firstMatch
+        XCTAssertTrue(paperButton.waitForExistence(timeout: 15),
+                      "The dock should offer the paper picker.")
+        paperButton.tap()
+
+        let ruled = app.buttons["paperStyleOption-ruled"].firstMatch
+        XCTAssertTrue(ruled.waitForExistence(timeout: 10),
+                      "The picker should list the ruled paper.")
+        ruled.tap()
+        // The popover closes on the pick, so it is reopened for the shot — the
+        // picture is of the picker *and* the paper it chose.
+        Thread.sleep(forTimeInterval: 1)
+        paperButton.tap()
+        Thread.sleep(forTimeInterval: 1)
+
+        attachScreenshot(named: "paper")
+    }
+
     /// Captures the document library with cards that have real previews on them.
     ///
     /// The drawings are seeded by the app on launch rather than drawn here: the

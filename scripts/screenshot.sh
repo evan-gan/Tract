@@ -4,6 +4,7 @@
 #
 #   ./scripts/screenshot.sh                          # canvas, both appearances
 #   ./scripts/screenshot.sh dark                     # canvas, just dark
+#   ./scripts/screenshot.sh light "" paper           # the paper picker, over ruled paper
 #   ./scripts/screenshot.sh both "" library          # document library, as a grid
 #   ./scripts/screenshot.sh light "" librarylist     # document library, outline with a folder open
 #   ./scripts/screenshot.sh light "" folder          # inside a folder, breadcrumb showing
@@ -40,6 +41,7 @@ SCREEN="${3:-canvas}"
 case "$SCREEN" in
   canvas)  TEST_METHOD=testCaptureCanvas ;;
   library) TEST_METHOD=testCaptureLibrary ;;
+  paper) TEST_METHOD=testCapturePaperPicker ;;
   librarylist) TEST_METHOD=testCaptureLibraryList ;;
   folder) TEST_METHOD=testCaptureFolder ;;
   exportpicker) TEST_METHOD=testCaptureExportPicker ;;
@@ -48,7 +50,7 @@ case "$SCREEN" in
   sharesheet) TEST_METHOD=testCaptureShareSheet ;;
   problempicker) TEST_METHOD=testCaptureProblemPicker ;;
   problembounds) TEST_METHOD=testCaptureProblemBounds ;;
-  *)       fail "Unknown screen '${SCREEN}' — use canvas, library, librarylist, folder, exportpicker, exportproblems, exportprogress, sharesheet, problempicker or problembounds." ;;
+  *)       fail "Unknown screen '${SCREEN}' — use canvas, paper, library, librarylist, folder, exportpicker, exportproblems, exportprogress, sharesheet, problempicker or problembounds." ;;
 esac
 
 SNAPSHOT_TEST="TractUITests/CanvasSnapshotUITests/$TEST_METHOD"

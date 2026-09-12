@@ -34,6 +34,8 @@ struct ToolDockView: View {
 
             strokeWeightButton
 
+            paperStyleButton
+
             DockDivider(axis: edge.axis)
 
             DockColorRail(
@@ -70,6 +72,22 @@ struct ToolDockView: View {
         }
     }
 
+    private var paperStyleButton: some View {
+        PaperStyleDockButton(
+            style: viewModel.backgroundStyle,
+            isPickerOpen: viewModel.isPaperStyleFlyoutVisible,
+            onTapped: viewModel.togglePaperStyleFlyout
+        )
+        .popover(isPresented: $viewModel.isPaperStyleFlyoutVisible) {
+            PaperStyleFlyout(
+                selectedStyle: viewModel.backgroundStyle,
+                onSelect: selectPaperStyle,
+                onDismiss: viewModel.togglePaperStyleFlyout
+            )
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+
     private var inkWheelButton: some View {
         InkWheelButton(
             isPanelOpen: viewModel.isColorPanelVisible,
@@ -86,6 +104,12 @@ struct ToolDockView: View {
     private func selectTool(_ tool: ToolType) {
         withAnimation(.snappy(duration: 0.25)) {
             viewModel.selectTool(tool)
+        }
+    }
+
+    private func selectPaperStyle(_ style: CanvasBackgroundStyle) {
+        withAnimation(.snappy(duration: 0.25)) {
+            viewModel.selectBackgroundStyle(style)
         }
     }
 

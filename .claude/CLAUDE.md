@@ -56,7 +56,7 @@ drops an assertion:
   (308s) and four was *worse* — the clones contend hard enough that each test's
   own duration roughly doubles, eating the parallel win. Do not raise it without
   re-measuring.
-- `-skip-testing:TractUITests/CanvasSnapshotUITests`. Those eight tests only
+- `-skip-testing:TractUITests/CanvasSnapshotUITests`. Those capture tests only
   navigate and call `attachScreenshot`; `screenshot.sh` runs them on demand,
   which is the only time the pictures are wanted. They cost 101s serial.
   **The target name must be `TractUITests` (from `project.yml`)** — xcodebuild
@@ -78,7 +78,9 @@ simulator, sets its light/dark appearance, runs the capture test in
 `UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
 into `build/screenshots/<screen>-<appearance>.png` — read that file to see the change.
 
-Nine screens are wired up: `canvas` (the default), `library` (the document grid),
+Ten screens are wired up: `canvas` (the default), `paper` (the paper picker, opened
+over a sheet it has just switched to ruled — so the shot shows both the swatches and
+the paper they applied), `library` (the document grid),
 `librarylist` (the outline, with a folder expanded), `folder` (inside a folder,
 where the breadcrumb lives), `exportpicker` (the export sheet, which the canvas shot cannot show
 because only the button is on the bar — it opens the *filed* sample document, so
