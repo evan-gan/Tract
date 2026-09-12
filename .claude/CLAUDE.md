@@ -35,7 +35,7 @@ TEST_WORKERS=1 ./scripts/test.sh    # serial, if a parallel run is hiding a fail
 TEST_SNAPSHOTS=1 ./scripts/test.sh  # also run CanvasSnapshotUITests (normally skipped)
 
 # Screenshot a screen on a simulator — light, dark, or both
-./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportpicker|exportprogress|sharesheet|problempicker]
+./scripts/screenshot.sh [light|dark|both] ["iPad Pro 11-inch (M5)"] [canvas|library|exportpicker|exportproblems|exportprogress|sharesheet|problempicker]
 ```
 
 `scripts/build.sh` uses `CODE_SIGNING_ALLOWED=NO`: it type-checks and links but
@@ -78,11 +78,14 @@ simulator, sets its light/dark appearance, runs the capture test in
 `UITests/CanvasSnapshotUITests.swift`, and pulls the PNG out of the result bundle
 into `build/screenshots/<screen>-<appearance>.png` — read that file to see the change.
 
-Eight screens are wired up: `canvas` (the default), `library` (the document grid),
+Nine screens are wired up: `canvas` (the default), `library` (the document grid),
 `librarylist` (the outline, with a folder expanded), `folder` (inside a folder,
 where the breadcrumb lives), `exportpicker` (the export sheet, which the canvas shot cannot show
 because only the button is on the bar — it opens the *filed* sample document, so
-the folder-path naming toggle is in the shot as well), `exportprogress` (the
+the folder-path naming toggle is in the shot as well, but *not* the
+chosen-problems card — that document is untagged), `exportproblems` (that card:
+it opens the seeded "Problem set", the one tagged sample, and ticks a chip),
+`exportprogress` (the
 spinner the picker shows while a pick renders — it launches with
 `-TractSlowExport`, which makes `ExportRunner` hold each stage for 1.2s on the
 rendering thread, because the sample drawings render far too fast to photograph),

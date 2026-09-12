@@ -34,8 +34,19 @@ struct ExportButton: View {
     /// in it on the first export of a session.
     @State private var session = ExportSession()
 
+    /// The problems the open document has ink under, read once as the picker
+    /// opens rather than tracked: the document is snapshotted, not observed, and
+    /// a tap is the one moment it is cheap to look at.
+    @State private var problemOptions: [ExportProblemOption] = []
+
+    /// Which of those the user has ticked. Deliberately cleared on every open —
+    /// a remembered selection would silently decide what a later export holds.
+    @State private var selectedProblems: Set<ProblemTag> = []
+
     var body: some View {
         Button {
+            problemOptions = ExportProblemOption.options(in: makeDocument())
+            selectedProblems = []
             session.presentPicker()
         } label: {
             Label("Export", systemImage: "square.and.arrow.up")
@@ -57,6 +68,8 @@ struct ExportButton: View {
             ExportPickerView(
                 folderPath: folderPath,
                 includesFolderPath: $includesFolderPath,
+                problemOptions: problemOptions,
+                selectedProblems: $selectedProblems,
                 runningExport: session.runningExport,
                 onPick: startExport,
                 onCancel: { session.cancel() }
@@ -95,6 +108,7 @@ struct ExportButton: View {
                 document: makeDocument(),
                 layout: layout,
                 format: format,
+                problems: layout.usesProblemSelection ? ProblemSelection(tags: selectedProblems) : .everything,
                 folderPath: includesFolderPath ? folderPath : []
             )
         )

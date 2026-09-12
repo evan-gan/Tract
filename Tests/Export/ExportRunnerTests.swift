@@ -130,7 +130,70 @@ struct ExportRunnerTests {
         #expect(stages == [.preparing])
     }
 
+    // MARK: - Chosen problems
+
+    @Test("Exporting chosen problems writes only their ink, named after them")
+    func chosenProblemsAreNamedAndWrittenAlone() throws {
+        let directory = try TemporaryDirectory()
+        let tagged = taggedDocument(titled: "Set 3")
+
+        let url = try ExportRunner.writeExport(
+            of: tagged.document,
+            layout: .selectedProblems,
+            format: .png,
+            selection: ProblemSelection(tags: [tagged.firstProblemTag]),
+            into: directory.url
+        )
+
+        #expect(url.lastPathComponent == "Set 3 1.png")
+        // The two problems are drawn far apart at the same size, so a PNG of one
+        // of them is dramatically smaller than a PNG of the pair.
+        let wholeDrawing = try ExportRunner.writeExport(
+            of: tagged.document, layout: .wholeDrawing, format: .png, into: directory.url
+        )
+        let chosenSize = try Data(contentsOf: url).count
+        let wholeSize = try Data(contentsOf: wholeDrawing).count
+        #expect(chosenSize < wholeSize)
+    }
+
+    @Test("Choosing a problem that has lost its ink reports the empty selection")
+    func emptySelectionThrows() throws {
+        let directory = try TemporaryDirectory()
+        let tagged = taggedDocument(titled: "Set 3")
+        var withoutInk = tagged.document
+        withoutInk.strokes = []
+
+        #expect(throws: ExportError.self) {
+            try ExportRunner.writeExport(
+                of: withoutInk,
+                layout: .selectedProblems,
+                format: .png,
+                selection: ProblemSelection(tags: [tagged.firstProblemTag]),
+                into: directory.url
+            )
+        }
+    }
+
     // MARK: - Fixtures
+
+    /// Two problems, one square of ink each, drawn far enough apart that an
+    /// export of one is visibly not an export of both.
+    private func taggedDocument(titled title: String) -> (document: SplineDocument, firstProblemTag: ProblemTag) {
+        var builder = ProblemOutlineBuilder()
+        let first = builder.node([1])
+        let second = builder.node([2])
+
+        var metadata = DocumentMetadata(title: title)
+        metadata.problemOutline = builder.outline
+        let document = SplineDocument(
+            metadata: metadata,
+            strokes: [
+                StrokeFixtures.square(at: .zero, side: 200, problemNodeID: first),
+                StrokeFixtures.square(at: CGPoint(x: 1200, y: 900), side: 200, problemNodeID: second)
+            ]
+        )
+        return (document, builder.outline.tag(at: builder.path([1])))
+    }
 
     private func document(titled title: String) -> SplineDocument {
         SplineDocument(

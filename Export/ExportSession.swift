@@ -5,6 +5,9 @@ struct ExportRequest: Sendable {
     let document: SplineDocument
     let layout: ExportLayout
     let format: ExportFormat
+    /// The problems to keep. `.everything` for the layouts that export the
+    /// document whole.
+    var problems: ProblemSelection = .everything
     /// Library folders prefixed onto the file name, outermost first.
     var folderPath: [String] = []
 }

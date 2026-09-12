@@ -74,6 +74,45 @@ final class ExportShareSheetUITests: XCTestCase {
                        "Cancelling the export picker should not share anything.")
     }
 
+    // MARK: - Chosen problems
+
+    /// Ticking one problem and sharing it as a picture is the whole point of the
+    /// chosen-problems group, so the path through the chips is tested end to end.
+    func testChoosingOneProblemExportsItAsAPicture() throws {
+        let app = launchWithSampleDocuments()
+        openTaggedSampleDocument(in: app)
+        openExportPicker(in: app)
+
+        let pngOption = app.buttons["exportOption-selectedProblems-png"].firstMatch
+        XCTAssertTrue(pngOption.waitForExistence(timeout: 10),
+                      "A tagged document should offer its problems as a picture export.")
+        XCTAssertFalse(pngOption.isEnabled,
+                       "With no problem ticked there is nothing to export, so the "
+                       + "formats should not be pickable.")
+
+        let firstProblem = app.buttons["exportProblemChip-1"].firstMatch
+        XCTAssertTrue(firstProblem.waitForExistence(timeout: 5),
+                      "The seeded problem set is tagged 1 and 2, so both should be offered.")
+        firstProblem.tap()
+
+        XCTAssertTrue(pngOption.isEnabled, "Ticking a problem should make the formats pickable.")
+        pngOption.tap()
+
+        XCTAssertTrue(waitForShareSheet(in: app),
+                      "Exporting a single chosen problem should reach the share sheet.")
+    }
+
+    /// The group has nothing to tick without tags, and an empty chooser is worse
+    /// than no chooser.
+    func testChosenProblemsGroupIsHiddenForAnUntaggedDocument() throws {
+        let app = launchWithSampleDocuments()
+        openSampleDocument(in: app)
+        openExportPicker(in: app)
+
+        XCTAssertFalse(app.buttons["exportOption-selectedProblems-png"].firstMatch.exists,
+                       "A document with no tagged problems should not offer to export a choice of them.")
+    }
+
     // MARK: - Folder path in the file name
 
     /// The toggle names the file after the folders holding the document, so it
@@ -125,6 +164,16 @@ final class ExportShareSheetUITests: XCTestCase {
         let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Wave study'")).firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 15),
                       "The seeded library should contain the Wave study drawing.")
+        card.tap()
+    }
+
+    /// Opens "Problem set", the one seeded document whose ink carries problem
+    /// tags — XCUITest can neither draw nor tag, so the chooser has nothing to
+    /// offer in any other document.
+    private func openTaggedSampleDocument(in app: XCUIApplication) {
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Problem set'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15),
+                      "The seeded library should contain the tagged problem set.")
         card.tap()
     }
 

@@ -13,6 +13,8 @@ enum ExportRunner {
     ///   - document: The document to export, snapshotted by the caller.
     ///   - layout: What to put on the page.
     ///   - format: Which of that layout's formats to write.
+    ///   - selection: The problems to keep. `.everything` exports the document
+    ///     whole, which is what every layout but `.selectedProblems` wants.
     ///   - folderPath: Library folders to prefix onto the file name, outermost
     ///     first. Empty means no prefix.
     ///   - directory: Where the file lands. Defaults to the temporary directory,
@@ -21,11 +23,13 @@ enum ExportRunner {
     ///     running on.
     /// - Returns: The URL of the written file.
     /// - Throws: `ExportError.unsupportedFormat` when the layout does not offer
-    ///   the format, whatever the exporter throws, or a file-system error.
+    ///   the format, `ExportError.emptySelection` when the chosen problems hold
+    ///   no ink, whatever the exporter throws, or a file-system error.
     static func writeExport(
         of document: SplineDocument,
         layout: ExportLayout,
         format: ExportFormat,
+        selection: ProblemSelection = .everything,
         folderPath: [String] = [],
         into directory: URL = FileManager.default.temporaryDirectory,
         onStage: (ExportStage) -> Void = { _ in }
@@ -34,13 +38,22 @@ enum ExportRunner {
         guard let adapter = layout.adapter(for: format) else {
             throw ExportError.unsupportedFormat(layout: layout.name, format: format.displayName)
         }
+        // Narrowing the document here is what keeps every exporter unaware of
+        // problems: they render whatever strokes they are handed.
+        let chosen = selection.applied(to: document)
+        guard !selection.limitsTheDocument || !chosen.strokes.isEmpty else {
+            throw ExportError.emptySelection
+        }
 
         onStage(.rendering)
-        let data = try adapter.export(document: document, viewport: nil)
+        let data = try adapter.export(document: chosen, viewport: nil)
 
         onStage(.writingFile)
+        // The selection's own suffix replaces the adapter's: "Set 3 1a.pdf" says
+        // far more about the file than "Set 3 problems.pdf" does.
+        let titleSuffix = selection.fileNameSuffix() ?? adapter.fileNameSuffix
         let fileName = ExportFileNaming.fileName(
-            title: document.title + adapter.fileNameSuffix,
+            title: document.title + titleSuffix,
             folderPath: folderPath,
             fileExtension: adapter.fileExtension
         )
@@ -79,6 +92,7 @@ enum ExportRunner {
                 of: request.document,
                 layout: request.layout,
                 format: request.format,
+                selection: request.problems,
                 folderPath: request.folderPath,
                 onStage: reportStage
             )

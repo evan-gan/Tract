@@ -65,6 +65,8 @@ enum ExportLayout: String, CaseIterable, Identifiable, Sendable {
     case wholeDrawing
     /// One problem per badged shape, nested to fill the paper.
     case problemWorksheet
+    /// Only the problems the user ticked — often exactly one.
+    case selectedProblems
     /// The drawing as the app recorded it, samples and all.
     case rawCapture
 
@@ -74,6 +76,7 @@ enum ExportLayout: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .wholeDrawing: "Whole drawing"
         case .problemWorksheet: "Problem worksheet"
+        case .selectedProblems: "Chosen problems"
         case .rawCapture: "Raw capture"
         }
     }
@@ -87,6 +90,9 @@ enum ExportLayout: String, CaseIterable, Identifiable, Sendable {
         case .problemWorksheet:
             "Every tagged problem badged with its number and nested onto sheets, "
             + "so scattered work reads as a worksheet."
+        case .selectedProblems:
+            "Only the problems you tick, and nothing else — one answer, ready to "
+            + "hand to someone."
         case .rawCapture:
             "Every pencil sample, tag and timing Tract recorded — for reading the "
             + "drawing outside the app."
@@ -97,6 +103,7 @@ enum ExportLayout: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .wholeDrawing: "rectangle.dashed"
         case .problemWorksheet: "list.number"
+        case .selectedProblems: "checklist"
         case .rawCapture: "waveform.path"
         }
     }
@@ -107,9 +114,17 @@ enum ExportLayout: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .wholeDrawing: [.pdf, .svg, .png]
         case .problemWorksheet: [.pdf]
+        // A picture is what gets pasted into a message, so the two picture
+        // formats sit alongside the paged PDF here where they do not on the
+        // full worksheet.
+        case .selectedProblems: [.pdf, .png, .svg]
         case .rawCapture: [.json]
         }
     }
+
+    /// Whether this layout exports only the problems the user ticked. The picker
+    /// puts its chooser on this group, and the run carries the selection.
+    var usesProblemSelection: Bool { self == .selectedProblems }
 
     /// The exporter that produces this layout in the given format, or nil when
     /// the pairing is not one this layout offers.
@@ -122,6 +137,12 @@ enum ExportLayout: String, CaseIterable, Identifiable, Sendable {
         case (.wholeDrawing, .svg): return SVGExporter()
         case (.wholeDrawing, .png): return PNGExporter()
         case (.problemWorksheet, .pdf): return PDFExporter(options: .problemSheet)
+        // The chosen problems are exported by narrowing the document and then
+        // running the ordinary renderers over what is left — which is why the
+        // PDF here is the same badged worksheet, only shorter.
+        case (.selectedProblems, .pdf): return PDFExporter(options: .problemSheet)
+        case (.selectedProblems, .png): return PNGExporter()
+        case (.selectedProblems, .svg): return SVGExporter()
         case (.rawCapture, .json): return JSONExporter()
         default: return nil
         }

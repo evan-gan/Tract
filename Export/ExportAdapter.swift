@@ -28,11 +28,16 @@ enum ExportError: LocalizedError {
     /// export picker, which only offers each layout's own formats — this catches
     /// a pairing invented in code.
     case unsupportedFormat(layout: String, format: String)
+    /// The picked problems hold no ink. The picker only offers problems that
+    /// have some, so this catches a selection made stale by an edit underneath.
+    case emptySelection
 
     var errorDescription: String? {
         switch self {
         case .noStrokes:
             "The document has no strokes to export."
+        case .emptySelection:
+            "The chosen problems have no ink in them. Pick a problem that has work under it."
         case .renderingFailed(let detail):
             "Export rendering failed: \(detail)"
         case .unsupportedFormat(let layout, let format):

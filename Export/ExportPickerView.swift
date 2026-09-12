@@ -21,6 +21,11 @@ struct ExportPickerView: View {
     let folderPath: [String]
     /// Whether those folders are prefixed onto the exported file's name.
     @Binding var includesFolderPath: Bool
+    /// The problems this document has ink under, offered as chips. Empty leaves
+    /// the chosen-problems group out entirely — there would be nothing to tick.
+    var problemOptions: [ExportProblemOption] = []
+    /// Which of those are ticked. Only the chosen-problems group reads it.
+    @Binding var selectedProblems: Set<ProblemTag>
     /// The export being rendered, if one is. Non-nil replaces the options with a
     /// spinner — the sheet stays up through the render so there is somewhere to
     /// say what is happening.
@@ -52,7 +57,7 @@ struct ExportPickerView: View {
 
     private var options: some View {
         VStack(alignment: .leading, spacing: 22) {
-            ForEach(ExportLayout.allCases) { layout in
+            ForEach(offeredLayouts) { layout in
                 layoutCard(layout)
             }
             if !folderPath.isEmpty {
@@ -79,18 +84,48 @@ struct ExportPickerView: View {
         .padding(.bottom, 4)
     }
 
+    /// Every layout, minus the ones this document cannot produce: a drawing with
+    /// no tagged problems has nothing to choose between.
+    private var offeredLayouts: [ExportLayout] {
+        ExportLayout.allCases.filter { !$0.usesProblemSelection || !problemOptions.isEmpty }
+    }
+
     private func layoutCard(_ layout: ExportLayout) -> some View {
-        ExportGroupCard(title: layout.name, symbolName: layout.symbolName, summary: layout.summary) {
-            ForEach(Array(layout.formats.enumerated()), id: \.element) { index, format in
-                if index > 0 {
-                    ExportRowDivider()
-                }
-                ExportFormatRow(format: format, layoutName: layout.name) {
-                    onPick(layout, format)
-                }
-                .accessibilityIdentifier("exportOption-\(layout.id)-\(format.id)")
+        ExportGroupCard(title: layout.name, symbolName: layout.symbolName, summary: summary(for: layout)) {
+            if layout.usesProblemSelection {
+                ExportProblemChooser(options: problemOptions, selection: $selectedProblems)
+                ExportRowDivider()
             }
+            formatRows(for: layout)
         }
+    }
+
+    /// The formats under a group, dimmed and inert while the group has nothing
+    /// to export — picking a format before ticking a problem would otherwise
+    /// produce an empty file.
+    private func formatRows(for layout: ExportLayout) -> some View {
+        let isAwaitingSelection = layout.usesProblemSelection && selectedProblems.isEmpty
+        return ForEach(Array(layout.formats.enumerated()), id: \.element) { index, format in
+            if index > 0 {
+                ExportRowDivider()
+            }
+            ExportFormatRow(format: format, layoutName: layout.name) {
+                onPick(layout, format)
+            }
+            .accessibilityIdentifier("exportOption-\(layout.id)-\(format.id)")
+        }
+        .disabled(isAwaitingSelection)
+        // A plain button keeps its own colours when disabled, so the rows have
+        // to say they are unavailable themselves.
+        .opacity(isAwaitingSelection ? 0.4 : 1)
+    }
+
+    /// The chosen-problems group reports what is ticked; every other group has
+    /// one fixed line.
+    private func summary(for layout: ExportLayout) -> String {
+        guard layout.usesProblemSelection, !selectedProblems.isEmpty else { return layout.summary }
+        let picked = problemOptions.filter { selectedProblems.contains($0.tag) }
+        return "Exporting \(picked.map(\.label).joined(separator: ", "))."
     }
 
     /// Sits last because it changes how every option above is named, rather than

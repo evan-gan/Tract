@@ -178,13 +178,15 @@ Tract/
 │
 ├── Export/
 │   ├── ExportAdapter.swift       # Protocol all exporters conform to
-│   ├── ExportLayout.swift        # The catalogue the picker is built from: ExportFormat (pdf/svg/png/json) and ExportLayout (whole drawing / problem worksheet / raw capture) → the adapter for each offered pairing
-│   ├── ExportRunner.swift        # Picked layout + format → rendered, named file on disk (no view involved); `runExport` is the off-main-thread wrapper that reports stages
+│   ├── ExportLayout.swift        # The catalogue the picker is built from: ExportFormat (pdf/svg/png/json) and ExportLayout (whole drawing / problem worksheet / chosen problems / raw capture) → the adapter for each offered pairing
+│   ├── ProblemSelection.swift    # Which problems an export is limited to: narrows a document to the ticked tags, names the file after them; `ExportProblemOption.options(in:)` is the chip list
+│   ├── ExportRunner.swift        # Picked layout + format (+ problem selection) → rendered, named file on disk (no view involved); `runExport` is the off-main-thread wrapper that reports stages
 │   ├── ExportSession.swift       # The flow: picker up → render → picker down → share sheet. Holds the running export, the finished file and the failure
 │   ├── ExportProgress.swift      # `ExportStage` (preparing / rendering / writing) and the wording the picker shows for one
 │   ├── ExportProgressView.swift  # Spinner + stage line + "Step n of 3", shown in place of the options while a pick renders
 │   ├── ExportButton.swift        # Filled capsule on the bar; opens the picker, then shares what it was asked for
 │   ├── ExportPickerView.swift    # The picker sheet: one card per layout, its formats inside, folder-path toggle last; sized to its contents. Swaps to progress once a format is picked
+│   ├── ExportProblemChooser.swift # The chosen-problems card's chips: tick the problems to export, Select all / Clear
 │   ├── ExportGroupCard.swift     # One titled card + its row divider — the grouped-list look, without a scroll view
 │   ├── ExportFormatRow.swift     # One pickable format: icon, name, what the file is, its extension
 │   ├── ExportFileNaming.swift    # Document title (+ optional folder path prefix) → safe file name
@@ -1139,8 +1141,9 @@ would be claiming a nib that isn't there.
 
 Export asks two questions, and the sheet is built to keep them apart:
 
-1. **What lands on the page** — an `ExportLayout`. Three of them: the whole
-   drawing as one picture, the per-problem worksheet, and the raw capture.
+1. **What lands on the page** — an `ExportLayout`. Four of them: the whole
+   drawing as one picture, the per-problem worksheet, the problems the user
+   ticked, and the raw capture.
 2. **Which file it is written as** — an `ExportFormat` (`pdf`, `svg`, `png`,
    `json`), chosen from the ones that layout can actually produce.
 
@@ -1161,9 +1164,10 @@ The pieces:
   plus a `Tests/Export/ExportLayoutTests` run, which checks every offered pairing
   resolves to an adapter and that the caption's extension is the one actually
   written. The picker renders whatever is here, in declaration order.
-- `ExportRunner.writeExport(of:layout:format:folderPath:into:onStage:)` — render,
-  name, write, hand back a URL. No view, so `Tests/Export/ExportRunnerTests` can
-  run every pairing the picker offers end to end.
+- `ExportRunner.writeExport(of:layout:format:selection:folderPath:into:onStage:)` —
+  render, name, write, hand back a URL. No view, so
+  `Tests/Export/ExportRunnerTests` can run every pairing the picker offers end to
+  end.
   `ExportRunner.runExport(_:onStage:)` is the async wrapper the app uses: it runs
   that work on a detached task and reports each stage back on the main actor.
 - `ExportSession.swift` — the flow: picker up, render, picker down, share sheet.
@@ -1175,6 +1179,39 @@ The pieces:
 - `ExportPickerView.swift` + `ExportGroupCard` + `ExportFormatRow` — the sheet.
 - `ExportProgress.swift` + `ExportProgressView.swift` — the spinner and the line
   that says what the run is doing.
+
+### Exporting only the problems you picked
+
+"Chosen problems" is the fourth layout, and the only one that asks a third
+question: *which* problems. Its card carries `ExportProblemChooser` — a chip per
+problem the document has ink under — above its formats, and offers PDF, PNG and
+SVG, because the common use is handing one answer to somebody rather than
+printing a set.
+
+How the narrowing works is the thing to know: **no exporter knows about
+problems.** `ProblemSelection.applied(to:)` returns a copy of the document
+carrying only the ticked problems' strokes, and `ExportRunner` hands *that* to
+whichever adapter the pairing resolves to. The PDF is therefore the same badged
+worksheet `problemWorksheet` produces, only shorter; the PNG and SVG are the
+ordinary whole-drawing renderers cropping to what is left.
+
+- Membership is by **full address**, not prefix. The chooser only offers problems
+  with ink filed directly under them, so 1 and 1a are separate chips and ticking
+  1 must not drag 1a's work along.
+- `ExportProblemOption.options(in:)` builds the chips from `ProblemGrouping`, so
+  a problem with no ink of its own — an ancestor whose work all sits in its
+  parts — never appears. A document with no tagged ink hides the whole group
+  (`ExportPickerView.offeredLayouts`).
+- The selection names the file: `ProblemSelection.fileNameSuffix()` gives
+  " 1a" for one problem, " 1-2a" for a few, " 5 problems" past that, and it
+  *replaces* the adapter's own suffix — "Set 3 1a.pdf" says more than
+  "Set 3 problems.pdf".
+- Nothing ticked means the formats are dimmed and inert, not that everything is
+  exported. `ProblemSelection.everything` (an empty tag set) is the no-limit
+  value the other three layouts run with, and `ExportButton` only passes a real
+  selection for a layout whose `usesProblemSelection` is true.
+- The chips are cleared every time the picker opens. A remembered selection would
+  silently decide what a later export holds.
 
 Three things in the sheet that are the way they are on purpose:
 
@@ -1203,7 +1240,12 @@ Three things in the sheet that are the way they are on purpose:
 Rows carry `exportOption-<layout>-<format>` identifiers (`exportOption-wholeDrawing-pdf`,
 `exportOption-problemWorksheet-pdf`, `exportOption-rawCapture-json`) — the same
 format appears under more than one layout, so a label alone cannot name a row.
-`./scripts/screenshot.sh both "" exportpicker` is the shot.
+The chips carry `exportProblemChip-<label>` (`exportProblemChip-1a`), with
+`exportSelectAllProblems` and `exportClearProblems` under them.
+`./scripts/screenshot.sh both "" exportpicker` is the shot — it opens the *filed*
+document, which is untagged, so the chosen-problems card is not in it;
+`./scripts/screenshot.sh both "" exportproblems` opens the seeded "Problem set"
+and ticks a chip, which is the shot of that card.
 `./scripts/screenshot.sh both "" exportprogress` is the one of the spinner — it
 launches with `-TractSlowExport`, a DEBUG-only argument that makes
 `ExportRunner` hold each stage for 1.2s on the rendering thread. The seeded
@@ -1544,6 +1586,7 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Add a new export *layout* (a different thing on the page) | A case in `ExportLayout` with its name, summary, formats and adapters — the picker renders it automatically |
 | Change the export button | `ExportButton.swift` |
 | Change the export picker's look or grouping | `ExportPickerView.swift` (cards: `ExportGroupCard.swift`, rows: `ExportFormatRow.swift`) |
+| Change which problems can be exported on their own, or how the chips look | `ProblemSelection.swift` for what a selection keeps and how it names the file, `ExportProblemChooser.swift` for the chips |
 | Fix system UI presented from the top bar coming up in the wrong appearance | Stamp `.environment(\.colorScheme, …)` from the window, as `ExportButton` does for both its sheets — the glass rewrites the inherited scheme |
 | Change how an exported file is named, or the folder-path prefix | `ExportFileNaming.swift`; the toggle that switches the prefix on is `ExportPickerView.folderPathCard` (remembered in `UserDefaults` as `exportIncludesFolderPath`), and the path itself rides down as `DocumentEditorSession.folderPath` → `TopBarView` → `ExportButton` |
 | Change how ink is rasterised (PNG, PDF, thumbnails) | `StrokeRasterizer.swift` |

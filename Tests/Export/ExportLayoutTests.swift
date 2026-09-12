@@ -22,6 +22,14 @@ struct ExportLayoutTests {
         #expect(ExportLayout.problemWorksheet.adapter(for: .png) == nil)
         #expect(ExportLayout.rawCapture.adapter(for: .pdf) == nil)
         #expect(ExportLayout.wholeDrawing.adapter(for: .json) == nil)
+        #expect(ExportLayout.selectedProblems.adapter(for: .json) == nil)
+    }
+
+    @Test("Chosen problems offer the three sharing formats, and only that layout is selective")
+    func chosenProblemsOfferSharingFormats() {
+        #expect(ExportLayout.selectedProblems.formats == [.pdf, .png, .svg])
+        #expect(ExportLayout.allCases.filter(\.usesProblemSelection) == [.selectedProblems],
+                "Only the chosen-problems group carries the picker's chip chooser.")
     }
 
     @Test("The worksheet renders as PDF only, because only the PDF renderer pages it")

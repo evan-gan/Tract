@@ -116,6 +116,37 @@ final class CanvasSnapshotUITests: XCTestCase {
         attachScreenshot(named: "exportpicker")
     }
 
+    /// Captures the export picker's problem chooser, with one problem ticked.
+    ///
+    /// It needs the seeded "Problem set" document: the chooser is built from
+    /// *tagged* ink, and every other sample is untagged, which hides the group
+    /// the shot is of — including in the `exportpicker` shot, which opens the
+    /// filed document for the folder-path toggle.
+    func testCaptureExportProblems() {
+        let app = launchSeededLibrary(viewMode: "grid")
+
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Problem set'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15),
+                      "The seeded library should contain the tagged problem set.")
+        card.tap()
+
+        let exportButton = app.buttons["Export"].firstMatch
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 15),
+                      "The canvas should offer an Export button.")
+        exportButton.tap()
+
+        let firstProblem = app.buttons["exportProblemChip-1"].firstMatch
+        XCTAssertTrue(firstProblem.waitForExistence(timeout: 10),
+                      "The picker should offer the document's problems as chips.")
+        // The sheet is still sliding up when its chips first exist.
+        Thread.sleep(forTimeInterval: 2.5)
+        firstProblem.tap()
+        // The card resizes as the summary line changes to name what is ticked.
+        Thread.sleep(forTimeInterval: 1)
+
+        attachScreenshot(named: "exportproblems")
+    }
+
     /// Captures the spinner the picker shows while a pick renders.
     ///
     /// The seeded drawings render in milliseconds, which is far too fast to
