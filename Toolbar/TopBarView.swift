@@ -25,6 +25,10 @@ struct TopBarView: View {
     var folderPath: [String] = []
     /// The problem tree and the tag new ink is filed under.
     let problems: ProblemTaggingModel
+    /// Whether the page is arranged into a grid of problems. Beside the tag,
+    /// because it rearranges exactly what the tag addresses.
+    let problemLayout: ProblemLayoutModel
+    let onToggleProblemLayout: () -> Void
     /// Height of the bar itself, reported so a dock parked at the top can settle
     /// under it. Deliberately *not* the height of the whole control: the wheel
     /// hanging open below must not shove the dock down the screen.
@@ -51,6 +55,14 @@ struct TopBarView: View {
             row { SaveIndicatorView(isSaving: isSaving) }
             row { separator }
             wheelSegment
+            // No divider between these two: the toggle belongs to the tag
+            // beside it, and a rule between them would read as a third group.
+            row {
+                ProblemLayoutToggleButton(
+                    layout: problemLayout,
+                    onToggle: onToggleProblemLayout
+                )
+            }
             row { separator }
             row {
                 ExportButton(makeDocument: makeDocument, folderPath: folderPath)

@@ -19,7 +19,10 @@ struct CanvasContentLayer: View {
             ProblemBoundsView(
                 regions: viewModel.problemRegions,
                 selectedNodeID: viewModel.problems.selectedNodeID,
-                transform: viewModel.canvasTransform
+                transform: viewModel.canvasTransform,
+                placement: viewModel.problemPlacement,
+                focusFrameNodeID: viewModel.problemLayout.frameNodeID,
+                focusFrameProgress: viewModel.problemLayout.focusFrameProgress
             )
             CanvasRenderer(
                 strokes: viewModel.strokes,
@@ -27,7 +30,9 @@ struct CanvasContentLayer: View {
                 transform: viewModel.canvasTransform,
                 selectedStrokeIDs: viewModel.selectedStrokeIDs,
                 selectionOffset: viewModel.selectionDragOffset,
-                problemInk: viewModel.problemInkStyling
+                problemInk: viewModel.problemInkStyling,
+                placement: viewModel.problemPlacement,
+                activePlacementOffset: viewModel.activePlacementOffset
             )
         }
     }

@@ -15,6 +15,19 @@ struct CanvasSelectionLayer: View {
 
     var body: some View {
         ZStack {
+            // Above the ink rather than under it like the bubbles: the box is a
+            // boundary held open around a whole screen of work, and a stroke
+            // running across its edge must not break the line.
+            if let frameNodeID = viewModel.problemLayout.frameNodeID {
+                ProblemFocusFrameView(
+                    bubbleLoop: viewModel.problemLayout.focusBubbleLoop,
+                    placementOffset: viewModel.problemPlacement.offset(forNode: frameNodeID),
+                    box: viewModel.problemLayout.focusBox,
+                    progress: viewModel.problemLayout.focusFrameProgress,
+                    transform: viewModel.canvasTransform,
+                    tint: viewModel.focusFrameTint
+                )
+            }
             if !viewModel.lassoPath.isEmpty {
                 LassoPathView(
                     canvasPoints: viewModel.lassoPath,

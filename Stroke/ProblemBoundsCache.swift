@@ -46,6 +46,11 @@ struct ProblemBoundsCache {
     ///     untagged.
     ///   - padding: How far the shape stands off the ink where it touches it.
     ///   - curveRadius: How much the shape refuses to follow the ink into a gap.
+    ///   - frozenNodeID: A problem whose shape must be handed back as it was
+    ///     last traced, however much its ink has changed since. The automatic
+    ///     layout passes the problem being edited: its bubble is hidden behind
+    ///     the focus frame anyway, so re-tracing it on every stroke would be
+    ///     work nobody can see. It traces once, when the focus is released.
     /// - Returns: One region per tagged problem, ordered outermost level first
     ///   (1, 1a, 1a(i), 1b, 2) so the drawing order never shuffles between
     ///   frames.
@@ -53,7 +58,8 @@ struct ProblemBoundsCache {
         in strokes: [Stroke],
         outline: ProblemOutline,
         padding: CGFloat,
-        curveRadius: CGFloat
+        curveRadius: CGFloat,
+        frozenNodeID: UUID? = nil
     ) -> [ProblemBounds] {
         let inkByNodeID = Self.inkGroupedByProblem(in: strokes)
         // Nothing on the page is filed under a problem, so there is no shape to
@@ -73,7 +79,8 @@ struct ProblemBoundsCache {
                     ink: ink,
                     outline: outline,
                     padding: padding,
-                    curveRadius: curveRadius
+                    curveRadius: curveRadius,
+                    isFrozen: nodeID == frozenNodeID
                 )
             }
             .sorted { $0.tag < $1.tag }
@@ -84,7 +91,8 @@ struct ProblemBoundsCache {
         ink: [Stroke],
         outline: ProblemOutline,
         padding: CGFloat,
-        curveRadius: CGFloat
+        curveRadius: CGFloat,
+        isFrozen: Bool
     ) -> ProblemBounds? {
         guard let path = outline.path(ofNode: nodeID), let problemIndex = path.first else {
             return nil
@@ -93,7 +101,8 @@ struct ProblemBoundsCache {
             forNode: nodeID,
             ink: ink,
             padding: padding,
-            curveRadius: curveRadius
+            curveRadius: curveRadius,
+            isFrozen: isFrozen
         ) else { return nil }
 
         return ProblemBounds(
@@ -111,10 +120,13 @@ struct ProblemBoundsCache {
         forNode nodeID: UUID,
         ink: [Stroke],
         padding: CGFloat,
-        curveRadius: CGFloat
+        curveRadius: CGFloat,
+        isFrozen: Bool
     ) -> TracedShape? {
         let fingerprint = ProblemInkFingerprint(strokes: ink)
-        if let entry = entriesByNodeID[nodeID], entry.ink == fingerprint { return entry.shape }
+        if let entry = entriesByNodeID[nodeID], isFrozen || entry.ink == fingerprint {
+            return entry.shape
+        }
 
         // Reached only on a miss, so the samples are mapped for the one problem
         // being retraced rather than for every problem on the page.

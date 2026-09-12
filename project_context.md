@@ -73,6 +73,7 @@ Tract/
 │   ├── TopBarView.swift          # The one top pill: back, title, save dot, problem tag, Export
 │   ├── TopBarSurfaceShape.swift  # That pill's outline, tongue and all, as one path
 │   ├── DocumentTitleView.swift   # Editable title pill
+│   ├── ProblemLayoutToggleButton.swift # The Arrange toggle, inside the pill beside the problem tag
 │   └── SaveIndicatorView.swift   # Quiet dot showing there is unsaved work
 │                                 # (the Export control itself is Export/ExportButton.swift)
 │
@@ -104,7 +105,19 @@ Tract/
 │   ├── SelectionOutlineView.swift # Marching-ants outline a quarter inch off the selection; draws the contours the view model traced
 │   ├── SelectionActionMenuView.swift # Floating glass menu a tap on the selection opens (Reassign, Delete)
 │   ├── ProblemBoundsStyle.swift  # Padding, curve radius, weights and opacities of the problem regions
-│   └── ProblemBoundsView.swift   # Draws every problem's region, tinted by problem, the picked one stronger
+│   ├── ProblemBoundsView.swift   # Draws every problem's region, tinted by problem, the picked one stronger; fades the focused one out as its box opens
+│   ├── ProblemFocusFrameStyle.swift # Dash, weight, corner radius and wash of the focus frame
+│   └── ProblemFocusFrameView.swift  # The boundary part way between a problem's bubble and its dashed edit box
+│
+├── ProblemLayout/                # Arranging the page into a grid of problems (the "Arrange" toggle)
+│   ├── ProblemLayoutModel.swift  # @Observable: the toggle, which problem is focused, and the placement it all resolves to
+│   ├── ProblemLayoutPlacement.swift # The shift per problem — the only thing the rest of the app sees; `.identity` when off
+│   ├── ProblemLayoutCell.swift   # One problem as the grid sees it: its path, and its ink bounds
+│   ├── ProblemLayoutGrid.swift   # Pure: cells → a row per problem, a column per part, rows as tall as their tallest member
+│   ├── ProblemFocusLayout.swift  # Pure: the box a focused problem gets, and how far everything else moves to clear it
+│   ├── ProblemFocusFrame.swift   # Pure: resampling a bubble and a box onto matching points so the boundary can travel between them
+│   ├── ProblemLayoutAnimator.swift # Display-link driven 0.75 s blend, because the ink canvas has animations switched off
+│   └── ProblemLayoutMetrics.swift  # Every gutter, margin fraction and duration the arrangement is built from
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures, SelectionFixtures (a canvas with ink already lassoed), TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
@@ -703,6 +716,180 @@ decides per touch instead, delaying the single tap only where the touch landed i
 a region and not on a live selection — the only place the second tap means
 anything. Both taps are finger-only, like the rest of the canvas chrome: a pencil
 double tap on the paper is two marks being drawn, and the nib has the lasso.
+
+---
+
+## Arranging problems into a grid
+
+The `Arrange` toggle (`ProblemLayoutToggleButton`, inside the top bar's pill
+beside the problem tag) lays the page out as a table of work: **one row per
+top-level problem, one column per lettered part, and every row as tall as the
+tallest thing standing in it.** Tapping a problem then opens it out for editing,
+pushing everything else clear of it.
+
+### Nothing is ever moved
+
+**No stroke's coordinates are touched by any of this.** The whole feature
+resolves to a `ProblemLayoutPlacement` — a canvas-space shift per problem,
+keyed on node id — that is *added when ink is painted* and *subtracted when a
+touch is measured*. Switching the toggle off is `ProblemLayoutPlacement.identity`,
+not an attempt to put the ink back, so the document is byte-for-byte what it was
+and nothing the arrangement does is ever saved or exported.
+
+This is the same trick `selectionDragOffset` already plays for a selection being
+dragged, and the two compose: ink dragged inside an arranged problem carries
+`placementOffset + selectionDragOffset`, summed into one value in
+`CanvasRenderer`'s `ResolvedInkStroke.offset`.
+
+The consequence to remember when adding anything that touches the canvas: **a
+canvas point is not a stored point.** Every hit test has to take the layout back
+off first, one problem at a time —
+
+- `problemRegion(containing:)` tests `point - offset(region)`
+- `continueErase` sweeps `previous - offset(stroke) → current - offset(stroke)`
+- `retagStrokes` and `selectionContains` subtract per stroke
+- `enclosedStrokeIDs(by:)` re-projects the *loop* once per problem rather than
+  once per stroke — a page has a handful of problems and thousands of marks
+- incoming pencil samples go through `CanvasViewModel.stored(_:)`, which takes
+  the active problem's shift off before the point is written into the stroke
+
+`retraceSelectionOutline()` is the exception that traces in **laid-out** space:
+the frame has to be where the user can see and grab it, and a selection spanning
+two problems the grid has moved apart has no single stored-space shape at all.
+That is also why toggling, focusing and unfocusing all clear the selection.
+
+### Measuring is cheap, tracing is not
+
+The grid is measured from `ProblemLayoutCell`s built out of each stroke's own
+`canvasBounds` — a union of rectangles every stroke already maintains as it is
+drawn. It deliberately does **not** use the traced bubbles: measuring a page of
+problems has to be possible inside a pencil gesture, and a trace is two
+distance-field sweeps.
+
+While a problem is focused its bubble is **frozen**. `ProblemBoundsCache.regions`
+takes a `frozenNodeID` and hands back that problem's last-traced shape whatever
+its ink has done since, so writing inside a focused problem retraces nothing at
+all. It is invisible, because the bubble is hidden behind the focus frame while
+it is focused, and it traces exactly once — when the focus is released, which is
+the moment the user has stopped editing. `frozenNodeID` is part of
+`ProblemRegionKey` for that reason: releasing a focus has to invalidate the
+cached array even though nothing else about the page changed.
+
+### The offset is pinned while you write — this is load-bearing
+
+**The grid is measured on exactly three events: the toggle, entering a focus,
+and leaving one.** Never on an edit. That is not an optimisation, it is what
+keeps the pen working, and it was learned the hard way.
+
+A problem's offset is `gridPosition - itsOwnBounds.minX`, and its ink is stored
+with that offset taken off. So re-measuring mid-edit closes a feedback loop: a
+mark written past the problem's left edge moves `bounds.minX` → the offset
+changes → every mark in the problem moves → the next sample is stored against a
+different offset. It diverges. On screen it reads as the ink appearing away from
+the nib, with a stray line joining strokes that were stored under different
+offsets.
+
+Pinning the offset for the length of an editing session breaks it: ink lands
+under the pen because the offset it is stored against is the one it is drawn
+with. The page re-flows once, on focus exit — the moment the user has stopped
+writing. `Tests/ProblemLayout/ProblemLayoutStabilityTests.swift` pins this.
+`recordEdit()` deliberately does **not** touch the layout.
+
+### The focus box
+
+The box is `ProblemFocusLayout.box(around:)`: the focused problem's ink with
+**half its own width clear either side and half its own height above and below**,
+floored at `minimumFocusMargin` so a problem that is still one short mark still
+has room to write in.
+
+It is a function of the problem and nothing else. It was briefly unioned with the
+viewport, to make it "reach the edges of the screen" — that was wrong twice over.
+The visible canvas rect is the screen *divided by the zoom*, so zooming out
+inflated the box without limit; and because the box is captured as canvas
+geometry it never shrank back. The room a problem needs is a property of the
+problem, not of how far away the user is standing.
+
+Being plain canvas geometry is also what makes the box travel and scale with the
+page, rather than re-fitting to the screen on every frame of a pan.
+
+It keeps growing with the writing. `CanvasViewModel.noteFocusedInkGrowth()` feeds
+the active stroke's bounds in on every sample; `noteFocusedInkBounds` ignores
+anything that does not actually reach past the box it already has, so the common
+sample costs a rect comparison — and it rebuilds with `remeasure: false`, which
+is what keeps it out of the feedback loop above.
+
+That growth path only ever **unions**, because inside a pencil gesture ink can
+only be added. The moments a problem can get *smaller* — undo, redo, an erase, a
+delete — call `remeasureFocusedInk` instead, which measures the problem's ink
+from scratch so the box can shrink back. They are rare enough to afford the walk.
+Both paths pass `remeasure: false`: re-flowing the grid under an undo would jump
+every problem sideways, which is not what undoing a stroke should mean.
+
+Everything else is pushed clear of that box by one shift per side
+(`ProblemFocusLayout.pushes`) — same row moves sideways, other rows move
+vertically, so nothing travels diagonally into a neighbour's slot. A problem
+already clear of the box is not dragged towards it. The focused problem's own
+*parts* are pushed like anything else: each part is a problem in its own right
+with its own bubble and its own column, and the box is sized around the work
+filed directly under the node that was tapped.
+
+### The boundary travels, it does not cross-fade
+
+`ProblemFocusFrame` resamples the bubble and the box onto the same 128 points so
+the outline can *move* between them. A cross-fade would read as one shape
+vanishing and another arriving, which loses the only thing the animation is there
+to say: that this is the same problem, given room.
+
+The correspondence is solved by putting both loops in the same canonical form —
+wound the same way (signed area), resampled at even spacing **by arc length**,
+and rotated to start due east of their own centroid. Arc length matters: a
+marching-squares contour has its points bunched wherever the grid cut it, and
+pairing raw indices would drag a crowded stretch of bubble across a whole side of
+the box. Two loops prepared that way pair up with no search, which is what keeps
+it cheap enough to evaluate per frame. The bubble's canonical form is computed
+once at focus time (`focusBubbleLoop`) and held — it is frozen anyway.
+
+**It is read a second time on the way out, and the order is load-bearing.**
+`releaseFocus()` drops the focus *first* and only then re-reads the bubble, so
+the box closes onto the shape the work has actually grown into. Reading it
+before dropping the focus hands back the frozen shape — the box then shrinks
+onto the outline the problem had when it opened, while `ProblemBoundsView` fades
+the newly retraced, larger one in underneath it. Two shapes in the same moment,
+and it reads as a shrink followed by a jump.
+
+### Why the animation is hand-driven
+
+`ProblemLayoutAnimator` steps the transition on a `CADisplayLink` over
+`ProblemLayoutMetrics.focusTransitionDuration` (0.75 s), easing with a plain
+cubic. **`withAnimation` cannot do this job**: the ink is painted by a SwiftUI
+`Canvas` carrying `.transaction { $0.animation = nil }` — it has to, or every
+pencil sample would animate into place — so an animated placement would simply
+jump. The canvas redraws at whatever placement it is handed, and the animator
+decides what that is.
+
+Two details in it that matter: a live measurement arriving mid-transition
+*retargets* rather than restarting (so writing during the entry animation does
+not reset it), and `animate(to:)` always starts from the **current** placement,
+which is what makes an interrupted transition reverse smoothly. The completion
+only fires if the run actually lands, which is what lets `frameNodeID` survive
+its own exit animation and then be torn down.
+
+### Tapping, while arranged
+
+`handleArrangedCanvasTap` replaces the plain region tap while the toggle is on:
+
+1. A tap in a problem points the wheel at it **and** focuses it.
+2. A tap in the problem *already* focused closes it again. The box is sized to
+   the problem, not to the screen, so a large problem can fill the view with no
+   paper in reach — this is the exit that is always where the user is looking.
+3. A tap inside the box but on no ink is blank working space — nothing happens.
+4. A tap outside the box leaves the focus **and lets go of the problem**, so the
+   next stroke is untagged rather than quietly joining the problem the user has
+   just stepped out of. That is the same thing a tap on blank paper does when
+   the page is not arranged, guarded by the same `pickedProblemHasRegion`.
+
+Double-tap still selects a problem's ink, unchanged. With the toggle off, every
+tap behaves exactly as it did before.
 
 ---
 

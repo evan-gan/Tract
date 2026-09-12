@@ -21,6 +21,14 @@ struct CanvasRenderer: View {
     /// Recolouring and dimming asked for by the problem picker's modes. Handed
     /// in already resolved, so the draw loop stays a lookup per stroke.
     var problemInk: ProblemInkStyling = .inactive
+    /// Where the automatic layout has moved each problem's work to. Applied the
+    /// same way the selection drag is — at draw time, never written into the
+    /// ink — so the arrangement costs no data churn and can be switched off
+    /// exactly.
+    var placement: ProblemLayoutPlacement = .identity
+    /// The shift the stroke under the pencil is being drawn at, which is the
+    /// one belonging to the problem it is being filed under.
+    var activePlacementOffset: CGPoint = .zero
 
     var body: some View {
         ZStack {
@@ -29,20 +37,29 @@ struct CanvasRenderer: View {
                 transform: transform,
                 selectedStrokeIDs: selectedStrokeIDs,
                 selectionOffset: selectionOffset,
-                problemInk: problemInk
+                problemInk: problemInk,
+                placement: placement
             )
-            ActiveInkLayer(stroke: activeStroke, transform: transform)
+            ActiveInkLayer(
+                stroke: activeStroke,
+                transform: transform,
+                placementOffset: activePlacementOffset
+            )
         }
     }
 }
 
 /// One stroke resolved for painting: the path to trace, how to paint it, and
-/// whether the live selection drag is carrying it.
+/// how far it is being shifted from where it is stored.
+///
+/// The shift is one value rather than one per source, because the two sources
+/// compose: ink dragged inside a problem the grid has moved carries both the
+/// arrangement's offset and the live drag's.
 private struct ResolvedInkStroke {
     let path: Path
     let color: Color
     let lineWidth: CGFloat
-    let isBeingDragged: Bool
+    let offset: CGPoint
 }
 
 /// Every stroke already on the page.
@@ -52,6 +69,7 @@ private struct CommittedInkLayer: View {
     let selectedStrokeIDs: Set<UUID>
     let selectionOffset: CGPoint
     let problemInk: ProblemInkStyling
+    let placement: ProblemLayoutPlacement
 
     /// Kept as view state so it survives the redraws it exists to make cheap.
     @State private var pathCache = StrokePathCache()
@@ -75,19 +93,25 @@ private struct CommittedInkLayer: View {
         let visibleCanvasRect = transform.visibleCanvasRect(inViewOfSize: viewSize)
         var visibleInk: [ResolvedInkStroke] = []
         visibleInk.reserveCapacity(strokes.count)
+        // Hashing a UUID per stroke per repaint is not free, and the layout is
+        // off for most documents most of the time.
+        let isArranged = !placement.isIdentity
 
         for stroke in strokes {
             guard InkDrawing.isDrawable(stroke) else { continue }
-            let isBeingDragged = selectedStrokeIDs.contains(stroke.id)
-            let dragOffset = isBeingDragged ? selectionOffset : .zero
-            guard InkDrawing.bounds(of: stroke, offsetBy: dragOffset).intersects(visibleCanvasRect)
+            let dragOffset = selectedStrokeIDs.contains(stroke.id) ? selectionOffset : .zero
+            let offset = isArranged ? placement.offset(for: stroke) + dragOffset : dragOffset
+            // Culled against where the mark is actually painted, not where it
+            // is stored — an arranged problem can be a long way from its own
+            // coordinates, and culling on those would blank it.
+            guard InkDrawing.bounds(of: stroke, offsetBy: offset).intersects(visibleCanvasRect)
             else { continue }
 
             visibleInk.append(ResolvedInkStroke(
                 path: pathCache.path(for: stroke),
                 color: problemInk.color(for: stroke).opacity(problemInk.opacity(for: stroke)),
                 lineWidth: stroke.style.lineWidth,
-                isBeingDragged: isBeingDragged
+                offset: offset
             ))
         }
         pruneCacheIfStale()
@@ -96,18 +120,19 @@ private struct CommittedInkLayer: View {
 
     private func paint(_ visibleInk: [ResolvedInkStroke], in context: inout GraphicsContext) {
         context.concatenate(transform.matrix)
-        // A copy of the context carrying the live drag: `GraphicsContext` is a
-        // value, so shifting this one leaves the shared transform alone and the
-        // selection can be painted in the same pass as everything else.
-        var draggedInkContext = context
-        draggedInkContext.translateBy(x: selectionOffset.x, y: selectionOffset.y)
 
         for ink in visibleInk {
-            if ink.isBeingDragged {
-                InkDrawing.stroke(ink, in: &draggedInkContext)
-            } else {
+            guard ink.offset != .zero else {
                 InkDrawing.stroke(ink, in: &context)
+                continue
             }
+            // A copy of the context carrying this stroke's shift.
+            // `GraphicsContext` is a value, so translating a copy leaves the
+            // shared transform alone and every stroke is still painted in the
+            // one pass, whatever it is offset by.
+            var shiftedContext = context
+            shiftedContext.translateBy(x: ink.offset.x, y: ink.offset.y)
+            InkDrawing.stroke(ink, in: &shiftedContext)
         }
     }
 
@@ -126,18 +151,23 @@ private struct CommittedInkLayer: View {
 private struct ActiveInkLayer: View {
     let stroke: Stroke?
     let transform: CanvasTransform
+    /// The arrangement's shift for the problem this stroke is being filed
+    /// under. Samples are stored with it taken off, so it has to go back on
+    /// here or the mark would appear away from the nib that is making it.
+    var placementOffset: CGPoint = .zero
 
     var body: some View {
         Canvas { context, _ in
             guard let stroke, InkDrawing.isDrawable(stroke) else { return }
             context.concatenate(transform.matrix)
+            context.translateBy(x: placementOffset.x, y: placementOffset.y)
             // Never cached: by definition this path changes on every sample.
             InkDrawing.stroke(
                 ResolvedInkStroke(
                     path: StrokePathCache.makePath(for: stroke),
                     color: stroke.style.swiftUIColor,
                     lineWidth: stroke.style.lineWidth,
-                    isBeingDragged: false
+                    offset: .zero
                 ),
                 in: &context
             )

@@ -27,10 +27,109 @@ final class CanvasViewModel {
     /// selection decides what every stroke laid down next is tagged with.
     let problems = ProblemTaggingModel()
 
+    /// Whether the page is arranged into a grid of problems, and which problem
+    /// is open for editing. Canvas state like the tree is: the placement it
+    /// resolves to decides where a stroke is drawn and where a touch lands.
+    let problemLayout = ProblemLayoutModel()
+
     init() {
         // Structural edits to the tree have to reach the disk the same way ink
         // does; the picker has no other route to the autosave.
         problems.onOutlineChanged = { [weak self] in self?.recordEdit() }
+        // The layout measures the page when it needs to rather than being told,
+        // so it can never be working from a stale copy of the ink.
+        problemLayout.cellsProvider = { [weak self] in self?.problemLayoutCells ?? [] }
+        problemLayout.contoursProvider = { [weak self] nodeID in
+            self?.problemRegions.first { $0.nodeID == nodeID }?.contours ?? []
+        }
+    }
+
+    // MARK: - Automatic layout
+
+    /// Where each problem's ink is shifted to, right now. Every draw and every
+    /// hit test goes through this; it is `.identity` whenever the layout is off,
+    /// which is what makes the toggle cost nothing when nobody is using it.
+    var problemPlacement: ProblemLayoutPlacement { problemLayout.placement }
+
+    /// How far the ink of the problem a stroke is filed under is shifted.
+    func placementOffset(for stroke: Stroke) -> CGPoint {
+        problemPlacement.offset(for: stroke)
+    }
+
+    /// The shift ink being laid down right now is drawn at.
+    ///
+    /// While a stroke is in flight this is the offset captured when it started,
+    /// not the live one — the same value its samples are being stored against,
+    /// so the mark cannot drift away from the nib however the layout moves
+    /// underneath it.
+    var activePlacementOffset: CGPoint {
+        activeStroke != nil
+            ? activeStrokePlacementOffset
+            : problemPlacement.offset(forNode: problems.selectedNodeID)
+    }
+
+    /// The layout shift the stroke under the pencil is being stored against,
+    /// fixed for the length of the gesture.
+    ///
+    /// Captured once rather than read per sample so that every point of one
+    /// stroke is stored in the same frame of reference. A stroke whose samples
+    /// were stored against two different offsets is kinked — it draws a line
+    /// from wherever the offset used to put it to wherever it puts it now.
+    @ObservationIgnored private var activeStrokePlacementOffset: CGPoint = .zero
+
+    /// One cell per problem that has ink, measured from the strokes' own cached
+    /// boxes rather than from a traced bubble.
+    ///
+    /// That is the whole reason the grid can keep up with a pen: a stroke
+    /// maintains `canvasBounds` as it is drawn, so measuring a page of problems
+    /// is a walk over rectangles — no distance field, no marching squares.
+    /// Padded by the bubble's own standoff so two problems laid side by side
+    /// still have their bubbles clear of one another.
+    private var problemLayoutCells: [ProblemLayoutCell] {
+        var boundsByNodeID: [UUID: CGRect] = [:]
+        for stroke in StrokeRasterizer.inkStrokes(strokes) {
+            guard let nodeID = stroke.problemNodeID, !stroke.canvasBounds.isNull else { continue }
+            boundsByNodeID[nodeID] = boundsByNodeID[nodeID]?.union(stroke.canvasBounds)
+                ?? stroke.canvasBounds
+        }
+        let padding = ProblemBoundsStyle.padding
+        return boundsByNodeID.compactMap { nodeID, bounds in
+            guard let path = problems.outline.path(ofNode: nodeID) else { return nil }
+            return ProblemLayoutCell(
+                nodeID: nodeID,
+                path: path,
+                bounds: bounds.insetBy(dx: -padding, dy: -padding)
+            )
+        }
+    }
+
+    /// Flips the arrangement on or off. The selection is dropped because its
+    /// traced frame describes ink at positions that are about to move.
+    func toggleProblemLayout() {
+        clearSelection()
+        problemLayout.toggle()
+    }
+
+    /// Opens a problem for editing, pushing its neighbours clear.
+    func focusProblem(_ nodeID: UUID) {
+        clearSelection()
+        problemLayout.focus(nodeID: nodeID)
+    }
+
+    /// Closes the focused problem back onto its own bubble.
+    func exitProblemFocus() {
+        clearSelection()
+        problemLayout.clearFocus()
+    }
+
+    /// The colour the focus frame is drawn in — the focused problem's own tint,
+    /// so the box reads as that problem's room rather than as generic chrome.
+    /// Falls back to the attention red for a problem with no traced region yet.
+    var focusFrameTint: Color {
+        guard let nodeID = problemLayout.frameNodeID,
+              let problemIndex = problemRegions.first(where: { $0.nodeID == nodeID })?.problemIndex
+        else { return AppTint.active }
+        return ProblemTintPalette.color(forProblemIndex: problemIndex)
     }
 
     /// How the canvas paints its ink under the tagging modes — a tint per
@@ -52,18 +151,37 @@ final class CanvasViewModel {
     /// alone, laying down untagged ink retraces nothing, and a reorder only
     /// relabels what is already traced.
     var problemRegions: [ProblemBounds] {
-        let key = ProblemRegionKey(revision: revision, outline: problems.outline)
+        let key = ProblemRegionKey(
+            revision: revision,
+            outline: problems.outline,
+            frozenNodeID: problemLayout.focusedNodeID
+        )
         if let cachedProblemRegions, cachedProblemRegionKey == key { return cachedProblemRegions }
 
         let regions = problemBoundsCache.regions(
             in: strokes,
             outline: problems.outline,
             padding: ProblemBoundsStyle.padding,
-            curveRadius: ProblemBoundsStyle.curveRadius
+            curveRadius: ProblemBoundsStyle.curveRadius,
+            // The problem being edited keeps the bubble it was last traced
+            // with. It is hidden behind the focus frame, so re-tracing it while
+            // the user writes would be work that never reaches the screen — it
+            // traces once, when the focus is released.
+            frozenNodeID: problemLayout.focusedNodeID
         )
         cachedProblemRegionKey = key
         cachedProblemRegions = regions
         return regions
+    }
+
+    /// The problem regions in the positions they are actually drawn at — the
+    /// traced geometry is stored-space, and the layout shifts it.
+    ///
+    /// The shift is applied by the view as it projects each point, not here:
+    /// translating every contour on every frame of an animation would cost far
+    /// more than adding an offset to a point that is being transformed anyway.
+    func placementOffset(for region: ProblemBounds) -> CGPoint {
+        problemPlacement.offset(forNode: region.nodeID)
     }
 
     /// The problem region a canvas point lands in, or `nil` for blank paper.
@@ -71,9 +189,13 @@ final class CanvasViewModel {
     /// Regions can overlap where two problems were written close together; the
     /// smallest one wins, because it is the more specific answer to "which
     /// problem is here".
+    ///
+    /// The point is taken back out of the layout, one problem at a time, so a
+    /// tap lands on the problem the user can see rather than on wherever that
+    /// problem's ink happens to be stored.
     func problemRegion(containing canvasPoint: CGPoint) -> ProblemBounds? {
         problemRegions
-            .filter { $0.contains(canvasPoint) }
+            .filter { $0.contains(canvasPoint - placementOffset(for: $0)) }
             .min { $0.extent.width * $0.extent.height < $1.extent.width * $1.extent.height }
     }
 
@@ -88,6 +210,10 @@ final class CanvasViewModel {
     private struct ProblemRegionKey: Equatable {
         let revision: Int
         let outline: ProblemOutline
+        /// Part of the key because freezing changes the answer: releasing a
+        /// focus has to retrace the problem that was frozen, and nothing else
+        /// about the page need have changed for that to be true.
+        let frozenNodeID: UUID?
     }
 
     /// How close, in screen points, a retag tap has to land to a mark to count
@@ -101,12 +227,18 @@ final class CanvasViewModel {
     private func retagStrokes(at canvasPoint: CGPoint) {
         let radius = canvasTransform.toCanvas(length: Self.retagHitScreenRadius)
         let targetNodeID = problems.selectedNodeID
+        let placement = problemPlacement
         var changedAnything = false
 
         for index in strokes.indices {
+            let offset = placement.offset(for: strokes[index])
             guard strokes[index].style.tool.isDrawingTool,
                   strokes[index].problemNodeID != targetNodeID,
-                  StrokeGeometry.stroke(strokes[index], contains: canvasPoint, within: radius)
+                  StrokeGeometry.stroke(
+                      strokes[index],
+                      contains: canvasPoint - offset,
+                      within: radius
+                  )
             else { continue }
             strokes[index].problemNodeID = targetNodeID
             changedAnything = true
@@ -161,6 +293,9 @@ final class CanvasViewModel {
     ) {
         strokes = loadedStrokes
         problems.restore(outline: outline)
+        // The arrangement describes one page; it does not follow the user into
+        // the next document they open.
+        problemLayout.reset()
         backgroundStyle = background
         activeStroke = nil
         undoStack.removeAll()
@@ -341,8 +476,16 @@ final class CanvasViewModel {
     /// Rebuilds the selection's frame from the ink it holds. Every path that
     /// changes *which* strokes are selected, or moves them, has to end here — the
     /// frame is otherwise left describing a selection that no longer exists.
+    /// Traced in *laid-out* space — where the ink is drawn — rather than where
+    /// it is stored, because that is where the user can see the frame and grab
+    /// it. A selection spanning two problems the grid has moved apart would
+    /// otherwise be framed around a shape that is on screen nowhere.
     private func retraceSelectionOutline() {
-        let polylines = selectedStrokes.map { $0.points.map(\.position) }
+        let placement = problemPlacement
+        let polylines = selectedStrokes.map { stroke in
+            let offset = placement.offset(for: stroke)
+            return stroke.points.map { $0.position + offset }
+        }
         selectionContours = polylines.isEmpty
             ? []
             : SelectionRegion.contours(around: polylines, radius: selectionStandoff)
@@ -353,8 +496,13 @@ final class CanvasViewModel {
     /// grabbed stays exactly what the user can see framed.
     func selectionContains(_ canvasPoint: CGPoint) -> Bool {
         guard hasSelection else { return false }
-        return selectedStrokes.contains {
-            StrokeGeometry.stroke($0, contains: canvasPoint, within: selectionStandoff)
+        let placement = problemPlacement
+        return selectedStrokes.contains { stroke in
+            StrokeGeometry.stroke(
+                stroke,
+                contains: canvasPoint - placement.offset(for: stroke),
+                within: selectionStandoff
+            )
         }
     }
 
@@ -482,6 +630,7 @@ final class CanvasViewModel {
 
     func cancelStroke() {
         activeStroke = nil
+        activeStrokePlacementOffset = .zero
         lassoPath.removeAll()
         lastErasePoint = nil
         strokesBeforeErase = nil
@@ -507,23 +656,73 @@ final class CanvasViewModel {
         clearSelection()
         // Tagged as it is drawn: the picker's selection is what "the problem I
         // am working on" means, so nothing has to be tagged after the fact.
+        // Fixed for the whole gesture, and taken from the *settled* layout: a
+        // sample stored against a position a running transition is about to
+        // leave would be out by however far that run had still to travel.
+        activeStrokePlacementOffset = problemLayout.settledPlacement
+            .offset(forNode: problems.selectedNodeID)
         var stroke = Stroke(
             sessionID: sessionID,
             style: currentStyle(),
             problemNodeID: problems.selectedNodeID
         )
-        stroke.appendPoint(point)
+        stroke.appendPoint(stored(point))
         activeStroke = stroke
+        noteFocusedInkGrowth()
     }
 
     /// Adds a sample to the stroke being drawn, unless it landed on top of the
     /// last one — see `minimumSampleScreenSpacing`.
     private func appendInkSample(_ point: StrokePoint) {
+        let sample = stored(point)
         if let lastPosition = activeStroke?.points.last?.position,
-           isTooCloseToKeep(point.position, after: lastPosition) {
+           isTooCloseToKeep(sample.position, after: lastPosition) {
             return
         }
-        activeStroke?.appendPoint(point)
+        activeStroke?.appendPoint(sample)
+        noteFocusedInkGrowth()
+    }
+
+    /// Takes an incoming sample back out of the automatic layout.
+    ///
+    /// Touches arrive where the user actually put them, which is where the ink
+    /// is *drawn*. The layout shifts a problem's work at draw time, so the same
+    /// shift has to come off before the sample is stored — otherwise switching
+    /// the arrangement off would scatter everything written while it was on.
+    private func stored(_ point: StrokePoint) -> StrokePoint {
+        let offset = activeStrokePlacementOffset
+        return offset == .zero ? point : point.moved(by: CGPoint(x: -offset.x, y: -offset.y))
+    }
+
+    /// Re-measures the focused problem so the box follows ink *away* as well as
+    /// in. Called from the edits that can make a problem smaller — undo, redo,
+    /// an erase, a delete — which the growing-union inside a pencil gesture
+    /// cannot notice.
+    private func remeasureFocusedProblem() {
+        guard let nodeID = problemLayout.focusedNodeID else { return }
+        problemLayout.remeasureFocusedInk(inkBounds(ofProblem: nodeID))
+    }
+
+    /// The canvas-space box one problem's ink covers, in stored space, padded to
+    /// match the cells the grid is measured from.
+    private func inkBounds(ofProblem nodeID: UUID) -> CGRect {
+        let bounds = StrokeRasterizer.inkStrokes(strokes)
+            .filter { $0.problemNodeID == nodeID }
+            .reduce(CGRect.null) { $0.union($1.canvasBounds) }
+        guard !bounds.isNull else { return .null }
+        let padding = ProblemBoundsStyle.padding
+        return bounds.insetBy(dx: -padding, dy: -padding)
+    }
+
+    /// Lets the focus box grow with the writing. Cheap by construction: the
+    /// active stroke maintains its own bounds, and the layout ignores a report
+    /// that does not actually reach past the box it already has.
+    private func noteFocusedInkGrowth() {
+        guard problemLayout.isFocused,
+              let stroke = activeStroke,
+              stroke.problemNodeID == problemLayout.focusedNodeID
+        else { return }
+        problemLayout.noteFocusedInkBounds(stroke.canvasBounds)
     }
 
     private func commitInkStroke() {
@@ -531,6 +730,10 @@ final class CanvasViewModel {
         stroke.endTime = .now
         stroke.isComplete = true
         activeStroke = nil
+        activeStrokePlacementOffset = .zero
+        // Pen-up is where the neighbours catch up with the room this problem
+        // grew into. Doing it per sample would repaint the whole page per frame.
+        problemLayout.settleNeighbours()
 
         undoStack.append(strokes)
         redoStack.removeAll()
@@ -556,8 +759,18 @@ final class CanvasViewModel {
         guard !isTooCloseToKeep(canvasPoint, after: previousPoint) else { return }
         lastErasePoint = canvasPoint
         let tipRadius = canvasTransform.toCanvas(length: Self.eraserTipScreenRadius)
-        strokes.removeAll {
-            StrokeGeometry.stroke($0, isTouchedBy: previousPoint, canvasPoint, tipRadius: tipRadius)
+        let placement = problemPlacement
+        // The swept segment is taken back out of each stroke's own layout
+        // shift, so the eraser rubs out the mark the user is touching rather
+        // than whatever is stored under that coordinate.
+        strokes.removeAll { stroke in
+            let offset = placement.offset(for: stroke)
+            return StrokeGeometry.stroke(
+                stroke,
+                isTouchedBy: previousPoint - offset,
+                canvasPoint - offset,
+                tipRadius: tipRadius
+            )
         }
     }
 
@@ -570,6 +783,9 @@ final class CanvasViewModel {
         guard let before = strokesBeforeErase, before.count != strokes.count else { return }
         undoStack.append(before)
         redoStack.removeAll()
+        // Rubbing ink out can shrink the problem, which only a fresh
+        // measurement will notice.
+        remeasureFocusedProblem()
         recordEdit()
     }
 
@@ -624,9 +840,31 @@ final class CanvasViewModel {
         defer { lassoPath.removeAll() }
         let loop = lassoPath
         guard loop.count >= 3 else { return }
-        select(strokeIDs: Set(
-            strokes.filter { StrokeGeometry.stroke($0, isEnclosedBy: loop) }.map(\.id)
-        ))
+        select(strokeIDs: Set(enclosedStrokeIDs(by: loop)))
+    }
+
+    /// Which strokes a traced loop encloses, with the layout accounted for.
+    ///
+    /// The loop is taken back out of the layout once per *problem* rather than
+    /// once per stroke: a page has a handful of problems and can have thousands
+    /// of marks, so re-projecting the loop for every stroke would do the same
+    /// arithmetic over and over for the same answer.
+    private func enclosedStrokeIDs(by loop: [CGPoint]) -> [UUID] {
+        let placement = problemPlacement
+        var loopsByNodeID: [UUID?: [CGPoint]] = [:]
+
+        return strokes.compactMap { stroke in
+            let nodeID = stroke.problemNodeID
+            let localLoop: [CGPoint]
+            if let cached = loopsByNodeID[nodeID] {
+                localLoop = cached
+            } else {
+                let offset = placement.offset(for: stroke)
+                localLoop = offset == .zero ? loop : loop.map { $0 - offset }
+                loopsByNodeID[nodeID] = localLoop
+            }
+            return StrokeGeometry.stroke(stroke, isEnclosedBy: localLoop) ? stroke.id : nil
+        }
     }
 
     /// Makes a set of strokes the live selection, framed and ready to be moved,
@@ -740,11 +978,48 @@ final class CanvasViewModel {
             }
             return
         }
+        if problemLayout.isEnabled {
+            handleArrangedCanvasTap(at: canvasPoint)
+            return
+        }
         if let region = problemRegion(containing: canvasPoint) {
             problems.selectNode(region.nodeID)
         } else if pickedProblemHasRegion {
             problems.clearSelection()
         }
+    }
+
+    /// A tap on the paper while the page is arranged into a grid.
+    ///
+    /// Landing in a problem opens it for editing as well as pointing the picker
+    /// at it — the arrangement exists to be worked in, so tapping a problem
+    /// means "let me at this one". Landing in the strip of paper outside the
+    /// focus box is the way back out, which is the whole reason the box stops
+    /// short of the screen edge.
+    private func handleArrangedCanvasTap(at canvasPoint: CGPoint) {
+        if let region = problemRegion(containing: canvasPoint) {
+            problems.selectNode(region.nodeID)
+            // Tapping the problem already being edited closes it again. The box
+            // is sized to the problem rather than to the screen, so a big
+            // problem can fill the view with no strip of paper in reach — this
+            // is the exit that is always where the user is already looking.
+            if region.nodeID == problemLayout.focusedNodeID {
+                exitProblemFocus()
+            } else {
+                focusProblem(region.nodeID)
+            }
+            return
+        }
+        // Inside the box but not on any ink is blank working space belonging to
+        // the problem being edited — leaving needs a tap outside it.
+        if problemLayout.isFocused, problemLayout.focusBox.contains(canvasPoint) {
+            return
+        }
+        // Blank paper. Stepping out of the box is stepping out of the problem,
+        // so the picker lets go of it too and the next stroke is untagged —
+        // exactly what a tap on blank paper does when the page is not arranged.
+        exitProblemFocus()
+        if pickedProblemHasRegion { problems.clearSelection() }
     }
 
     /// Picks up every mark filed under the problem whose region the point lands
@@ -811,6 +1086,7 @@ final class CanvasViewModel {
         redoStack.removeAll()
         strokes.removeAll { doomedStrokeIDs.contains($0.id) }
         clearSelection()
+        remeasureFocusedProblem()
         recordEdit()
     }
 
@@ -842,6 +1118,7 @@ final class CanvasViewModel {
         redoStack.append(strokes)
         strokes = previous
         pruneSelection()
+        remeasureFocusedProblem()
         recordEdit()
     }
 
@@ -850,6 +1127,7 @@ final class CanvasViewModel {
         undoStack.append(strokes)
         strokes = next
         pruneSelection()
+        remeasureFocusedProblem()
         recordEdit()
     }
 

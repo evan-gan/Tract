@@ -127,7 +127,8 @@ also shuts it). From there, each row carries a
 
 ## The top bar is one surface
 
-Back, title, saving dot, problem tag and Export share a single glass pill
+Back, title, saving dot, problem tag, the Arrange toggle and Export share a
+single glass pill
 (`TopBarView`). Anything added up there belongs *inside* that pill, not beside it
 — and not on its own `glassEffect`, because glass cannot sample glass. The
 problem wheel is the pattern to copy for something that expands: the bar's whole
@@ -136,6 +137,10 @@ out inside the bar's own layout at full height. Two things not to redo — letti
 the glass container blend a second surface onto the bar (it bites a piece out of
 the bar where they meet), and hanging the expansion in an overlay (SwiftUI does
 not hit-test what falls outside a view's bounds, so its rows stop responding).
+
+`ProblemLayoutToggleButton` sits immediately after the wheel with **no divider**
+between them: it rearranges exactly what the tag addresses, and a rule there
+reads as a third group rather than as one problem-chrome cluster.
 
 ## Touches on the top chrome
 

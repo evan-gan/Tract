@@ -35,8 +35,13 @@ struct StrokePoint: Codable, Sendable {
     /// pencil telemetry — is deliberately carried over: moving a mark across the
     /// canvas does not change how it was drawn.
     func moved(by offset: CGPoint) -> StrokePoint {
+        positioned(at: position + offset)
+    }
+
+    /// A copy of this sample at an exact position, keeping all its telemetry.
+    func positioned(at newPosition: CGPoint) -> StrokePoint {
         StrokePoint(
-            position: position + offset,
+            position: newPosition,
             force: force,
             azimuth: azimuth,
             altitude: altitude,

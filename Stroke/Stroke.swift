@@ -58,10 +58,20 @@ struct Stroke: Identifiable, Codable, Sendable {
     }
 
     /// Replaces an estimated point with its final values from UIKit's update pass.
+    ///
+    /// **The sample keeps the position it was stored at.** Position is not an
+    /// estimated property — UIKit refines force and azimuth, and the update
+    /// carries the touch's raw location only incidentally. Taking that location
+    /// would be wrong wherever the stored position is not the raw one: under the
+    /// automatic problem layout ink is stored with its problem's shift removed,
+    /// so writing the raw point back teleported refined samples to the unshifted
+    /// position — a spike out of the middle of the stroke, and, because
+    /// `canvasBounds` is not recomputed here, a stroke whose box no longer
+    /// covers its own ink, which the eraser's broad phase then rejected.
     mutating func updatePoint(at updateIndex: Int, with finalPoint: StrokePoint) {
         guard let idx = points.firstIndex(where: { $0.estimationUpdateIndex == updateIndex }) else {
             return
         }
-        points[idx] = finalPoint
+        points[idx] = finalPoint.positioned(at: points[idx].position)
     }
 }

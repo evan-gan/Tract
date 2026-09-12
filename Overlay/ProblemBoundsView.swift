@@ -12,6 +12,17 @@ struct ProblemBoundsView: View {
     /// is obvious which region new ink is going into.
     let selectedNodeID: UUID?
     let transform: CanvasTransform
+    /// Where the automatic layout has moved each problem to. Added as each
+    /// point is projected, which costs nothing — the point is being transformed
+    /// anyway — where translating every contour up front would cost a pass over
+    /// the whole page on every frame of the animation.
+    var placement: ProblemLayoutPlacement = .identity
+    /// The problem whose bubble is being replaced by the focus frame, and how
+    /// far that replacement has got. The bubble fades out as the dashed box
+    /// opens out of it, so the boundary reads as one shape changing rather than
+    /// as two shapes swapping places.
+    var focusFrameNodeID: UUID?
+    var focusFrameProgress: CGFloat = 0
 
     var body: some View {
         Canvas { context, _ in
@@ -25,29 +36,42 @@ struct ProblemBoundsView: View {
         .allowsHitTesting(false)
     }
 
+    /// How visible one region is: fully, unless it is the one dissolving into
+    /// the focus frame.
+    private func fade(for region: ProblemBounds) -> CGFloat {
+        region.nodeID == focusFrameNodeID ? 1 - min(max(focusFrameProgress, 0), 1) : 1
+    }
+
     private func draw(_ region: ProblemBounds, in context: inout GraphicsContext) {
+        let fade = fade(for: region)
+        guard fade > 0 else { return }
+
         let isSelected = region.nodeID == selectedNodeID
         let tint = ProblemTintPalette.color(forProblemIndex: region.problemIndex)
+        let offset = placement.offset(forNode: region.nodeID)
         let path = Path { path in
             for contour in region.contours {
-                path.addSmoothedLoop(through: contour.map(transform.toScreen))
+                path.addSmoothedLoop(through: contour.map { transform.toScreen($0 + offset) })
             }
         }
 
+        let fillOpacity = (isSelected
+            ? ProblemBoundsStyle.selectedFillOpacity
+            : ProblemBoundsStyle.fillOpacity) * fade
+        let strokeOpacity = (isSelected
+            ? ProblemBoundsStyle.selectedStrokeOpacity
+            : ProblemBoundsStyle.strokeOpacity) * fade
+
         context.fill(
             path,
-            with: .color(tint.opacity(isSelected
-                ? ProblemBoundsStyle.selectedFillOpacity
-                : ProblemBoundsStyle.fillOpacity)),
+            with: .color(tint.opacity(fillOpacity)),
             // Even-odd so an enclosed hole is left unfilled whichever way
             // marching squares happened to wind it.
             style: FillStyle(eoFill: true)
         )
         context.stroke(
             path,
-            with: .color(tint.opacity(isSelected
-                ? ProblemBoundsStyle.selectedStrokeOpacity
-                : ProblemBoundsStyle.strokeOpacity)),
+            with: .color(tint.opacity(strokeOpacity)),
             lineWidth: isSelected
                 ? ProblemBoundsStyle.selectedLineWidth
                 : ProblemBoundsStyle.lineWidth
