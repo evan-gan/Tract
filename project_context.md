@@ -67,6 +67,7 @@ Tract/
 │   ├── CanvasPaperSwatch.swift   # A paper thumbnail, painted by that same painter
 │   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, line width, pan phase, heavy-line rhythm
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
+│   ├── CanvasEdit.swift          # One undoable ink edit (added/removed/moved/retagged) that replays itself either way
 │   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–400%, screen↔canvas conversion, visible rect, `fitting(_:inViewOfSize:padding:)`
 │
 ├── Toolbar/                      # Fixed top chrome (close, title, save dot, problem wheel, export)
@@ -261,6 +262,20 @@ Retagging is the one thing that is *not* a fourth tool: while
 `problems.isRetagging` is on, those same three calls re-file the ink under the
 nib instead of dispatching, so the pen the user was drawing with is still in hand
 when the mode goes off again.
+
+**Undo is an edit log, not page snapshots.** `undoStack` / `redoStack` hold
+`CanvasEdit` values (`Canvas/CanvasEdit.swift`), each able to `apply(to:)` and
+`revert(on:)` itself: `.added` (strokes appended — pen), `.removed` (erase and
+delete, each stroke with the index it had when it went, so undo reinserts in
+reverse and z-order comes back exactly — build these with
+`CanvasEdit.removeStrokes(from:where:)`), `.moved` (ids + offset, replayed through
+`Stroke.translate(by:)` so telemetry and timestamps are never rewritten) and
+`.retagged` (per-stroke from/to tags — retag sweeps and Reassign). Every edit goes
+through `pushUndoEntry(_:)`, one entry per gesture and only if it changed
+something. Entries assume the list is in the state they left it, which in-order
+replay guarantees; anything that sets `strokes` wholesale (`restore`) must clear
+both stacks. Auto-layout placement is draw-time only and never becomes an entry.
+Pinned by `Tests/Canvas/UndoEditLogTests.swift`.
 
 **Pen** — the only tool that produces a `Stroke`. One undo step per gesture.
 

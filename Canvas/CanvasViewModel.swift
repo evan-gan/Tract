@@ -228,7 +228,6 @@ final class CanvasViewModel {
         let radius = canvasTransform.toCanvas(length: Self.retagHitScreenRadius)
         let targetNodeID = problems.selectedNodeID
         let placement = problemPlacement
-        var changedAnything = false
 
         for index in strokes.indices {
             let offset = placement.offset(for: strokes[index])
@@ -240,23 +239,25 @@ final class CanvasViewModel {
                       within: radius
                   )
             else { continue }
+            // A stroke already carrying the target is skipped above, so each one
+            // is re-filed at most once per sweep and its first tag is the original.
+            retagChangesInGesture[strokes[index].id] = CanvasEdit.TagChange(
+                from: strokes[index].problemNodeID,
+                to: targetNodeID
+            )
             strokes[index].problemNodeID = targetNodeID
-            changedAnything = true
         }
-        if changedAnything { retagGestureChangedInk = true }
     }
 
-    /// Stroke list as it stood before the current retag gesture, so a sweep is
-    /// one undo step — and only if it actually re-filed something.
-    private var strokesBeforeRetag: [Stroke]?
-    private var retagGestureChangedInk = false
+    /// Every stroke the current retag sweep has re-filed, so the sweep is one
+    /// undo step — and only if it actually re-filed something.
+    private var retagChangesInGesture: [UUID: CanvasEdit.TagChange] = [:]
     /// Where the sweep was last tested, so samples that have barely moved can be
     /// dropped before they walk the whole page again.
     private var lastRetagPoint: CGPoint?
 
     private func beginRetag(at canvasPoint: CGPoint) {
-        strokesBeforeRetag = strokes
-        retagGestureChangedInk = false
+        retagChangesInGesture.removeAll()
         lastRetagPoint = canvasPoint
         retagStrokes(at: canvasPoint)
     }
@@ -271,13 +272,11 @@ final class CanvasViewModel {
 
     private func endRetag() {
         defer {
-            strokesBeforeRetag = nil
-            retagGestureChangedInk = false
+            retagChangesInGesture.removeAll()
             lastRetagPoint = nil
         }
-        guard retagGestureChangedInk, let before = strokesBeforeRetag else { return }
-        undoStack.append(before)
-        redoStack.removeAll()
+        guard !retagChangesInGesture.isEmpty else { return }
+        pushUndoEntry(.retagged(retagChangesInGesture))
         recordEdit()
     }
 
@@ -538,8 +537,10 @@ final class CanvasViewModel {
     }
 
     // MARK: - Undo / redo
-    private var undoStack: [[Stroke]] = []
-    private var redoStack: [[Stroke]] = []
+    /// Edits in the order they were made, each able to replay itself either way —
+    /// see `CanvasEdit` for why these are not snapshots of the page.
+    private var undoStack: [CanvasEdit] = []
+    private var redoStack: [CanvasEdit] = []
 
     /// Shared session ID groups strokes from the current drawing session.
     private let sessionID = UUID()
@@ -548,16 +549,13 @@ final class CanvasViewModel {
 
     /// Where the eraser was last sampled, so each move can be tested as a segment.
     private var lastErasePoint: CGPoint?
-    /// Stroke list as it stood before the current erase gesture, pushed onto the
-    /// undo stack only if the gesture actually removed something.
-    private var strokesBeforeErase: [Stroke]?
+    /// Every stroke the current erase gesture has deleted, in the order it went,
+    /// pushed onto the undo stack only if the gesture actually removed something.
+    private var strokesErasedInGesture: [CanvasEdit.RemovedStroke] = []
 
     /// Where a selection drag was grabbed, in canvas space, or nil when no drag
     /// is in flight. Doubles as the flag for whether one is.
     private var selectionDragOrigin: CGPoint?
-    /// Stroke list as it stood before the current selection drag, so the move can
-    /// be undone in one step.
-    private var strokesBeforeSelectionDrag: [Stroke]?
     /// When the current selection touch landed, so a brief one can be told from a
     /// deliberate press that happened not to move.
     private var selectionDragStartTime: Date?
@@ -633,7 +631,7 @@ final class CanvasViewModel {
         activeStrokePlacementOffset = .zero
         lassoPath.removeAll()
         lastErasePoint = nil
-        strokesBeforeErase = nil
+        strokesErasedInGesture.removeAll()
         cancelSelectionDrag()
     }
 
@@ -735,9 +733,8 @@ final class CanvasViewModel {
         // grew into. Doing it per sample would repaint the whole page per frame.
         problemLayout.settleNeighbours()
 
-        undoStack.append(strokes)
-        redoStack.removeAll()
         strokes.append(stroke)
+        pushUndoEntry(.added([stroke]))
         recordEdit()
     }
 
@@ -748,7 +745,7 @@ final class CanvasViewModel {
     private func beginErase(at canvasPoint: CGPoint) {
         clearSelection()
         activeStroke = nil
-        strokesBeforeErase = strokes
+        strokesErasedInGesture.removeAll()
         lastErasePoint = canvasPoint
     }
 
@@ -763,7 +760,7 @@ final class CanvasViewModel {
         // The swept segment is taken back out of each stroke's own layout
         // shift, so the eraser rubs out the mark the user is touching rather
         // than whatever is stored under that coordinate.
-        strokes.removeAll { stroke in
+        let erased = CanvasEdit.removeStrokes(from: &strokes) { stroke in
             let offset = placement.offset(for: stroke)
             return StrokeGeometry.stroke(
                 stroke,
@@ -772,17 +769,17 @@ final class CanvasViewModel {
                 tipRadius: tipRadius
             )
         }
+        strokesErasedInGesture.append(contentsOf: erased)
     }
 
     /// Records one undo entry for the whole gesture, and only if it deleted something.
     private func endErase() {
         defer {
             lastErasePoint = nil
-            strokesBeforeErase = nil
+            strokesErasedInGesture.removeAll()
         }
-        guard let before = strokesBeforeErase, before.count != strokes.count else { return }
-        undoStack.append(before)
-        redoStack.removeAll()
+        guard !strokesErasedInGesture.isEmpty else { return }
+        pushUndoEntry(.removed(strokesErasedInGesture))
         // Rubbing ink out can shrink the problem, which only a fresh
         // measurement will notice.
         remeasureFocusedProblem()
@@ -888,7 +885,6 @@ final class CanvasViewModel {
     func beginSelectionDrag(at canvasPoint: CGPoint) {
         guard hasSelection else { return }
         selectionDragOrigin = canvasPoint
-        strokesBeforeSelectionDrag = strokes
         selectionDragStartTime = .now
         selectionDragOffset = .zero
     }
@@ -910,8 +906,7 @@ final class CanvasViewModel {
     /// pushes nothing.
     func endSelectionDrag() {
         let offset = selectionDragOffset
-        guard let strokesBeforeDrag = strokesBeforeSelectionDrag,
-              let dragOrigin = selectionDragOrigin else { return }
+        guard let dragOrigin = selectionDragOrigin else { return }
         let wasTap = isTapLikeTouch
         cancelSelectionDrag()
 
@@ -921,11 +916,9 @@ final class CanvasViewModel {
         }
         guard offset != .zero else { return }
 
-        undoStack.append(strokesBeforeDrag)
-        redoStack.removeAll()
-        for index in strokes.indices where selectedStrokeIDs.contains(strokes[index].id) {
-            strokes[index].translate(by: offset)
-        }
+        let move = CanvasEdit.moved(strokeIDs: selectedStrokeIDs, offset: offset)
+        move.apply(to: &strokes)
+        pushUndoEntry(move)
         // The ink moved rigidly, so the frame moves with it — tracing it again
         // would rebuild a distance field to arrive at the same shape.
         selectionContours = selectionContours.map { contour in
@@ -937,7 +930,6 @@ final class CanvasViewModel {
     /// Drops the drag without moving anything — the ink was never touched.
     func cancelSelectionDrag() {
         selectionDragOrigin = nil
-        strokesBeforeSelectionDrag = nil
         selectionDragStartTime = nil
         selectionDragOffset = .zero
     }
@@ -1082,9 +1074,10 @@ final class CanvasViewModel {
         guard hasSelection else { return }
         let doomedStrokeIDs = selectedStrokeIDs
 
-        undoStack.append(strokes)
-        redoStack.removeAll()
-        strokes.removeAll { doomedStrokeIDs.contains($0.id) }
+        let removals = CanvasEdit.removeStrokes(from: &strokes) { doomedStrokeIDs.contains($0.id) }
+        // A selection whose ink is already gone has nothing to delete, and an
+        // empty entry would make the next undo do nothing visible.
+        if !removals.isEmpty { pushUndoEntry(.removed(removals)) }
         clearSelection()
         remeasureFocusedProblem()
         recordEdit()
@@ -1099,11 +1092,13 @@ final class CanvasViewModel {
         guard hasSelection else { return }
         let reassignedStrokeIDs = selectedStrokeIDs
 
-        undoStack.append(strokes)
-        redoStack.removeAll()
-        for index in strokes.indices where reassignedStrokeIDs.contains(strokes[index].id) {
-            strokes[index].problemNodeID = nodeID
+        var changes: [UUID: CanvasEdit.TagChange] = [:]
+        for stroke in strokes where reassignedStrokeIDs.contains(stroke.id) {
+            changes[stroke.id] = CanvasEdit.TagChange(from: stroke.problemNodeID, to: nodeID)
         }
+        let retag = CanvasEdit.retagged(changes)
+        retag.apply(to: &strokes)
+        pushUndoEntry(retag)
         hideSelectionMenu()
         recordEdit()
     }
@@ -1113,19 +1108,26 @@ final class CanvasViewModel {
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
 
+    /// Records a fresh edit. Any redo history is dropped: it described a future
+    /// that branched off before this edit and can no longer be replayed onto it.
+    private func pushUndoEntry(_ edit: CanvasEdit) {
+        undoStack.append(edit)
+        redoStack.removeAll()
+    }
+
     func undo() {
-        guard let previous = undoStack.popLast() else { return }
-        redoStack.append(strokes)
-        strokes = previous
+        guard let edit = undoStack.popLast() else { return }
+        edit.revert(on: &strokes)
+        redoStack.append(edit)
         pruneSelection()
         remeasureFocusedProblem()
         recordEdit()
     }
 
     func redo() {
-        guard let next = redoStack.popLast() else { return }
-        undoStack.append(strokes)
-        strokes = next
+        guard let edit = redoStack.popLast() else { return }
+        edit.apply(to: &strokes)
+        undoStack.append(edit)
         pruneSelection()
         remeasureFocusedProblem()
         recordEdit()
