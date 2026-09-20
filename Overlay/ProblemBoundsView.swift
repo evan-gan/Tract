@@ -23,6 +23,10 @@ struct ProblemBoundsView: View {
     /// as two shapes swapping places.
     var focusFrameNodeID: UUID?
     var focusFrameProgress: CGFloat = 0
+    /// The problem focus has just jumped away from, whose bubble fades back in
+    /// as its box closes onto it.
+    var closingFrameNodeID: UUID?
+    var closingFrameProgress: CGFloat = 0
 
     var body: some View {
         Canvas { context, _ in
@@ -37,9 +41,13 @@ struct ProblemBoundsView: View {
     }
 
     /// How visible one region is: fully, unless it is the one dissolving into
-    /// the focus frame.
+    /// a focus frame.
     private func fade(for region: ProblemBounds) -> CGFloat {
-        region.nodeID == focusFrameNodeID ? 1 - min(max(focusFrameProgress, 0), 1) : 1
+        switch region.nodeID {
+        case focusFrameNodeID: 1 - min(max(focusFrameProgress, 0), 1)
+        case closingFrameNodeID: 1 - min(max(closingFrameProgress, 0), 1)
+        default: 1
+        }
     }
 
     private func draw(_ region: ProblemBounds, in context: inout GraphicsContext) {

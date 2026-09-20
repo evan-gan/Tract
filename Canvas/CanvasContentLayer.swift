@@ -22,7 +22,9 @@ struct CanvasContentLayer: View {
                 transform: viewModel.canvasTransform,
                 placement: viewModel.problemPlacement,
                 focusFrameNodeID: viewModel.problemLayout.frameNodeID,
-                focusFrameProgress: viewModel.problemLayout.focusFrameProgress
+                focusFrameProgress: viewModel.problemLayout.focusFrameProgress,
+                closingFrameNodeID: viewModel.problemLayout.closingFrame?.nodeID,
+                closingFrameProgress: viewModel.problemLayout.closingFrameProgress
             )
             CanvasRenderer(
                 strokes: viewModel.strokes,

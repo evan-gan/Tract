@@ -436,7 +436,9 @@ extension CanvasUIView: UIGestureRecognizerDelegate {
     /// tap on the paper, so stepping out of a problem or opening the selection
     /// menu would visibly lag. Deciding per touch keeps that instant everywhere
     /// except on a problem's region, which is the only place the second tap has
-    /// anything to do. A tap on a live selection is excluded too: that touch
+    /// anything to do — a problem's region, or the focus box. Without the wait
+    /// the single tap recognises first and fails the double tap outright. A
+    /// tap on a live selection is excluded too: that touch
     /// belongs to the selection the user is already holding.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
@@ -448,7 +450,7 @@ extension CanvasUIView: UIGestureRecognizerDelegate {
             let screenLocation = gestureRecognizer.location(in: self)
             let canvasPoint = viewModel.canvasTransform.toCanvas(screenLocation)
             guard !viewModel.selectionContains(canvasPoint) else { return false }
-            return viewModel.problemRegion(containing: canvasPoint) != nil
+            return viewModel.problemNode(forDoubleTapAt: canvasPoint) != nil
         }
     }
 

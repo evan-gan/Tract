@@ -42,7 +42,17 @@ enum ProblemFocusLayout {
     ) -> Result {
         guard let focusedCell = arrangement.cells.first(where: { $0.nodeID == focusedNodeID })
         else { return .unfocused }
+        return resolve(focusedCell: focusedCell, inkBounds: inkBounds, arrangement: arrangement)
+    }
 
+    /// The same, for a focused problem the caller already holds a cell for —
+    /// including one not in the arrangement yet, such as a problem whose first
+    /// stroke is still being drawn.
+    static func resolve(
+        focusedCell: ProblemLayoutCell,
+        inkBounds: CGRect,
+        arrangement: ProblemLayoutGrid.Arrangement
+    ) -> Result {
         let box = box(around: inkBounds)
         return Result(
             box: box,

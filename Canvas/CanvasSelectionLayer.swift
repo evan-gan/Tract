@@ -18,6 +18,18 @@ struct CanvasSelectionLayer: View {
             // Above the ink rather than under it like the bubbles: the box is a
             // boundary held open around a whole screen of work, and a stroke
             // running across its edge must not break the line.
+            // The frame focus just jumped away from, closing while the new one
+            // opens. Under it, so the problem being entered reads as on top.
+            if let closingFrame = viewModel.problemLayout.closingFrame {
+                ProblemFocusFrameView(
+                    bubbleLoop: closingFrame.bubbleLoop,
+                    placementOffset: viewModel.problemPlacement.offset(forNode: closingFrame.nodeID),
+                    box: closingFrame.box,
+                    progress: viewModel.problemLayout.closingFrameProgress,
+                    transform: viewModel.canvasTransform,
+                    tint: viewModel.focusFrameTint(forNode: closingFrame.nodeID)
+                )
+            }
             if let frameNodeID = viewModel.problemLayout.frameNodeID {
                 ProblemFocusFrameView(
                     bubbleLoop: viewModel.problemLayout.focusBubbleLoop,
@@ -25,7 +37,7 @@ struct CanvasSelectionLayer: View {
                     box: viewModel.problemLayout.focusBox,
                     progress: viewModel.problemLayout.focusFrameProgress,
                     transform: viewModel.canvasTransform,
-                    tint: viewModel.focusFrameTint
+                    tint: viewModel.focusFrameTint(forNode: frameNodeID)
                 )
             }
             if !viewModel.lassoPath.isEmpty {

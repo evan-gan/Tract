@@ -116,6 +116,31 @@ struct ProblemDoubleTapSelectionTests {
         #expect(viewModel.problems.selectedNodeID == second)
     }
 
+    @Test("In focus, a double tap on the box's blank room selects the focused problem's ink")
+    func focusBoxBlankRoomSelectsFocusedProblem() throws {
+        let (viewModel, first, _) = canvasWithTwoProblems()
+        viewModel.toggleProblemLayout()
+        viewModel.focusProblem(first)
+        let box = viewModel.problemLayout.focusBox
+        // Just inside the box's left edge: room around the work, beyond the
+        // traced bubble — the spot that used to select nothing.
+        let blankRoom = CGPoint(x: box.minX + 2, y: box.midY)
+        try #require(viewModel.problemRegion(containing: blankRoom) == nil)
+
+        #expect(viewModel.handleCanvasDoubleTap(at: blankRoom))
+
+        let expected = Set(viewModel.strokes.filter { $0.problemNodeID == first }.map(\.id))
+        #expect(viewModel.selectedStrokeIDs == expected)
+    }
+
+    @Test("Outside focus, the same blank paper still selects nothing")
+    func noFocusBoxMeansNothingSelected() {
+        let (viewModel, _, _) = canvasWithTwoProblems()
+        viewModel.toggleProblemLayout()
+
+        #expect(viewModel.problemNode(forDoubleTapAt: blankPaper) == nil)
+    }
+
     @Test("Double-tapping a second problem replaces the first selection")
     func replacesAnEarlierSelection() {
         let (viewModel, _, second) = canvasWithTwoProblems()

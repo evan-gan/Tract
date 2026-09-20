@@ -24,6 +24,12 @@ final class ProblemLayoutAnimator {
     /// finishes travelling exactly as the other problems finish moving.
     private(set) var focusProgress: CGFloat = 0
 
+    /// How open the frame focus was just *taken from* still is, when focus
+    /// jumps straight from one problem to another. Only ever eases towards 0:
+    /// a frame handed off never reopens, so every run closes it the rest of the
+    /// way, and it costs nothing once it has landed there.
+    private(set) var closingFrameProgress: CGFloat = 0
+
     var isAnimating: Bool { displayLink != nil }
 
     /// Where every problem is *heading*. The same as `placement` at rest.
@@ -54,6 +60,19 @@ final class ProblemLayoutAnimator {
         }
         self.placement = placement
         self.focusProgress = focusProgress
+        closingFrameProgress = 0
+    }
+
+    /// Passes the open frame's progress over to the closing one and starts the
+    /// focus progress again from nothing, so the next `animate` closes the old
+    /// frame while the new one opens — both on the same run, and so the same
+    /// display link, rather than one frame snapping shut as the other appears.
+    ///
+    /// Takes the progress as it stands, so a switch made mid-transition closes
+    /// the old frame from wherever it had actually got to.
+    func handOffFocusFrame() {
+        closingFrameProgress = focusProgress
+        focusProgress = 0
     }
 
     /// Eases from wherever the layout is now to a new arrangement.
@@ -81,6 +100,7 @@ final class ProblemLayoutAnimator {
         }
         origin = self.placement
         originFocusProgress = self.focusProgress
+        originClosingFrameProgress = closingFrameProgress
         target = placement
         targetFocusProgress = focusProgress
         startTime = CACurrentMediaTime()
@@ -99,6 +119,7 @@ final class ProblemLayoutAnimator {
     @ObservationIgnored private var target: ProblemLayoutPlacement = .identity
     @ObservationIgnored private var originFocusProgress: CGFloat = 0
     @ObservationIgnored private var targetFocusProgress: CGFloat = 0
+    @ObservationIgnored private var originClosingFrameProgress: CGFloat = 0
     @ObservationIgnored private var startTime: CFTimeInterval = 0
     @ObservationIgnored private var duration: TimeInterval = 0
     @ObservationIgnored private var displayLink: CADisplayLink?
@@ -122,6 +143,11 @@ final class ProblemLayoutAnimator {
         placement = .interpolating(from: origin, to: target, progress: eased)
         focusProgress = originFocusProgress
             + (targetFocusProgress - originFocusProgress) * eased
+        // Skipped when there is no handed-off frame, so an ordinary transition
+        // does not publish an unchanged value to observers every frame.
+        if originClosingFrameProgress > 0 {
+            closingFrameProgress = originClosingFrameProgress * (1 - eased)
+        }
 
         guard linear >= 1 else { return }
         stop()
@@ -130,6 +156,7 @@ final class ProblemLayoutAnimator {
         // permanently a hair out of line.
         placement = target
         focusProgress = targetFocusProgress
+        if closingFrameProgress != 0 { closingFrameProgress = 0 }
         let finished = onFinished
         onFinished = nil
         finished?()

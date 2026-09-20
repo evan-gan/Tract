@@ -61,6 +61,22 @@ final class ProblemLayoutModel {
     /// moving underneath it without being rebuilt.
     private(set) var focusBubbleLoop: [CGPoint] = []
 
+    /// The frame of the problem focus has just jumped away from, still closing
+    /// back onto its bubble while the new one opens. Nil unless a switch is
+    /// mid-animation.
+    private(set) var closingFrame: ClosingFocusFrame?
+
+    /// 1 when the closing frame is still the full box, 0 once it is back to
+    /// its bubble.
+    var closingFrameProgress: CGFloat { animator.closingFrameProgress }
+
+    /// Everything needed to keep drawing a frame after focus has left it.
+    struct ClosingFocusFrame: Equatable {
+        let nodeID: UUID
+        let bubbleLoop: [CGPoint]
+        let box: CGRect
+    }
+
     // MARK: - The toggle
 
     func setEnabled(_ enabled: Bool) {
@@ -100,17 +116,75 @@ final class ProblemLayoutModel {
     @discardableResult
     func focus(nodeID: UUID) -> Bool {
         guard isEnabled, focusedNodeID != nodeID else { return false }
-        focusedNodeID = nodeID
-        frameNodeID = nodeID
-        focusBubbleLoop = ProblemFocusFrame.canonicalLoop(in: contoursProvider(nodeID))
-        // Frozen at the moment of focus: the box is canvas geometry from here
-        // on, so it travels and scales with the page the way the ink does.
         // Seeded with what the problem has already been written, so the first
         // stroke of the session widens the box rather than collapsing it onto
         // that one mark.
-        liveInkBounds = cellsProvider().first { $0.nodeID == nodeID }?.bounds ?? .null
+        moveFocus(to: nodeID, seedInkBounds: cellsProvider().first { $0.nodeID == nodeID }?.bounds ?? .null)
+        focusBubbleLoop = ProblemFocusFrame.canonicalLoop(in: contoursProvider(nodeID))
         rebuild(animated: true)
         return true
+    }
+
+    /// Opens a box around a problem the pen has just started in — one with no
+    /// earlier ink, so no cell in the grid and no bubble to grow out of.
+    ///
+    /// Runs inside a pencil gesture, so it does **not** re-measure the grid
+    /// (see `rebuild`): the new problem stays unarranged, at offset zero, which
+    /// is exactly what its first samples were stored against. It takes a grid
+    /// slot when the focus is released, like any other re-flow.
+    ///
+    /// - Parameters:
+    ///   - nodeID: The problem the stroke is filed under.
+    ///   - path: Its place in the outline — the row and column the neighbours
+    ///     are pushed relative to.
+    ///   - inkBounds: The first mark, padded, in stored canvas space.
+    /// - Returns: Whether a box was opened. False when the layout is off, the
+    ///   problem is already focused, or it already has a place in the grid.
+    @discardableResult
+    func focusUnarrangedProblem(nodeID: UUID, path: ProblemPath, inkBounds: CGRect) -> Bool {
+        guard isEnabled, focusedNodeID != nodeID, !path.isEmpty, !inkBounds.isNull,
+              arrangement.framesByNodeID[nodeID] == nil
+        else { return false }
+        moveFocus(to: nodeID, seedInkBounds: inkBounds)
+        unarrangedFocusPath = path
+        // No traced bubble exists yet, so the frame grows out of a pill around
+        // the first mark — otherwise the box would pop in at full size.
+        focusBubbleLoop = ProblemFocusFrame.canonical(ProblemFocusFrame.roundedRectLoop(
+            inkBounds,
+            cornerRadius: min(inkBounds.width, inkBounds.height) / 2
+        ))
+        rebuild(animated: true, remeasure: false)
+        return true
+    }
+
+    /// Whether the grid, as last measured, has a place for this problem.
+    func hasGridSlot(for nodeID: UUID) -> Bool {
+        arrangement.framesByNodeID[nodeID] != nil
+    }
+
+    /// Points the focus at a new problem, handing any frame already on screen
+    /// over so it closes while the new one opens.
+    private func moveFocus(to nodeID: UUID, seedInkBounds: CGRect) {
+        let previousFrameNodeID = frameNodeID
+        let previousBox = focusBox
+        focusedNodeID = nodeID
+        unarrangedFocusPath = nil
+        // A frame already on screen for another problem — open, or on its way
+        // closed — closes while this one opens instead of vanishing. Read after
+        // the focus moves, for the same reason `releaseFocus` reads late: the
+        // old problem's bubble is only unfrozen once it is no longer focused.
+        if let previousFrameNodeID, previousFrameNodeID != nodeID {
+            closingFrame = ClosingFocusFrame(
+                nodeID: previousFrameNodeID,
+                bubbleLoop: ProblemFocusFrame.canonicalLoop(in: contoursProvider(previousFrameNodeID)),
+                box: previousBox
+            )
+            animator.handOffFocusFrame()
+        }
+        frameNodeID = nodeID
+        // Frozen at the moment of focus: the box is canvas geometry from here
+        // on, so it travels and scales with the page the way the ink does.
+        liveInkBounds = seedInkBounds
     }
 
     @discardableResult
@@ -190,6 +264,28 @@ final class ProblemLayoutModel {
         rebuild(animated: false, remeasure: false)
     }
 
+    /// Re-flows the whole grid after ink has been re-filed from one problem to
+    /// another, keeping whatever is focused focused.
+    ///
+    /// A retag is the one edit that changes *which cell* ink belongs to, so the
+    /// pinned grid is simply wrong afterwards: the re-filed marks are drawn at
+    /// their new problem's old offset, a problem that gained work overlaps its
+    /// neighbours, and one that did not exist before has no cell at all.
+    ///
+    /// Re-measuring here does not reopen the feedback loop `rebuild` warns
+    /// about. That loop needs a pencil stroke being stored against the offset
+    /// while it moves; this runs once the retag has finished, when nothing is
+    /// being written.
+    ///
+    /// - Parameter focusedInkBounds: The focused problem's ink, measured from
+    ///   scratch in stored canvas space — it may have gained or lost marks.
+    ///   Ignored when nothing is focused.
+    func reflowAfterRetag(focusedInkBounds: CGRect) {
+        guard isEnabled else { return }
+        if isFocused { liveInkBounds = focusedInkBounds }
+        rebuild(animated: true)
+    }
+
     // MARK: - Building
 
     @ObservationIgnored private let animator = ProblemLayoutAnimator()
@@ -200,16 +296,23 @@ final class ProblemLayoutModel {
     /// stored canvas space. Accumulated rather than re-measured so the box never
     /// shrinks back under the pen mid-sentence.
     @ObservationIgnored private var liveInkBounds: CGRect = .null
+    /// Where the focused problem sits in the outline when it has no cell in the
+    /// grid yet — set by `focusUnarrangedProblem`, nil otherwise.
+    @ObservationIgnored private var unarrangedFocusPath: ProblemPath?
 
     /// Drops the focus itself but leaves the frame's geometry standing, so the
     /// box has something to animate *back* to. `retireFrame` clears the rest
     /// once that animation lands.
     private func clearFocusState() {
         focusedNodeID = nil
+        unarrangedFocusPath = nil
         liveInkBounds = .null
     }
 
+    /// Run when a transition lands. The closing frame has always finished by
+    /// then, whatever the focus is doing.
     private func retireFrame() {
+        closingFrame = nil
         guard !isFocused else { return }
         frameNodeID = nil
         focusBox = .null
@@ -218,9 +321,9 @@ final class ProblemLayoutModel {
 
     /// - Parameter remeasure: Whether to measure the page again.
     ///
-    /// **The grid is measured only on the three events that ask for it** —
-    /// switching the toggle, entering a focus, and leaving one — and never
-    /// while the user is writing. That is not an optimisation, it is a
+    /// **The grid is measured only on the events that ask for it** —
+    /// switching the toggle, entering a focus, leaving one, and the end of a
+    /// retag — and never while the user is writing. That is not an optimisation, it is a
     /// correctness requirement.
     ///
     /// A problem's offset is `gridPosition - itsOwnBounds.minX`, and ink is
@@ -273,8 +376,15 @@ final class ProblemLayoutModel {
 
     private func resolveFocus() -> ProblemFocusLayout.Result {
         guard let focusedNodeID else { return .unfocused }
+        // A problem focused before it had a grid slot stands in with a cell
+        // built from its path; the push only reads row, column and stack.
+        let focusedCell = arrangement.cells.first { $0.nodeID == focusedNodeID }
+            ?? unarrangedFocusPath.map {
+                ProblemLayoutCell(nodeID: focusedNodeID, path: $0, bounds: liveInkBounds)
+            }
+        guard let focusedCell else { return .unfocused }
         return ProblemFocusLayout.resolve(
-            focusedNodeID: focusedNodeID,
+            focusedCell: focusedCell,
             inkBounds: laidOutFocusedInkBounds(),
             arrangement: arrangement
         )

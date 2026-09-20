@@ -117,7 +117,7 @@ Tract/
 │   ├── ProblemLayoutGrid.swift   # Pure: cells → a row per problem, a column per part, rows as tall as their tallest member
 │   ├── ProblemFocusLayout.swift  # Pure: the box a focused problem gets, and how far everything else moves to clear it
 │   ├── ProblemFocusFrame.swift   # Pure: resampling a bubble and a box onto matching points so the boundary can travel between them
-│   ├── ProblemLayoutAnimator.swift # Display-link driven 0.75 s blend, because the ink canvas has animations switched off
+│   ├── ProblemLayoutAnimator.swift # Display-link driven 0.75 s blend, because the ink canvas has animations switched off; also closes a handed-off frame on a focus switch
 │   └── ProblemLayoutMetrics.swift  # Every gutter, margin fraction and duration the arrangement is built from
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
@@ -719,6 +719,13 @@ traced from (drawing tools, two samples or more), points the picker at that
 problem, and does nothing at all on blank paper — stepping out of a problem stays
 the single tap's job. Covered by `Tests/Canvas/ProblemDoubleTapSelectionTests.swift`.
 
+While a problem is focused, the **whole focus box** counts as that problem for a
+double tap (`problemNode(forDoubleTapAt:)`), not just its bubble: the bubble is
+frozen at the shape it had when the box opened, so new work and the room around
+it lie outside it. The same function decides where the single tap waits for the
+double tap in `CanvasUIView` — a single tap that does not wait recognises first
+and fails the double tap outright, which is why the box selected nothing before.
+
 Every way of picking ink up funnels through `CanvasViewModel.select(strokeIDs:)`,
 which is what fixes the canvas-space standoff and re-traces the frame. Add a new
 one there rather than assigning `selectedStrokeIDs` directly, or the selection
@@ -792,8 +799,8 @@ cached array even though nothing else about the page changed.
 
 ### The offset is pinned while you write — this is load-bearing
 
-**The grid is measured on exactly three events: the toggle, entering a focus,
-and leaving one.** Never on an edit. That is not an optimisation, it is what
+**The grid is measured on exactly four events: the toggle, entering a focus
+(except a first-stroke focus, which must not), leaving one, and the end of a retag.** Never on any other edit. That is not an optimisation, it is what
 keeps the pen working, and it was learned the hard way.
 
 A problem's offset is `gridPosition - itsOwnBounds.minX`, and its ink is stored
@@ -808,6 +815,14 @@ Pinning the offset for the length of an editing session breaks it: ink lands
 under the pen because the offset it is stored against is the one it is drawn
 with. The page re-flows once, on focus exit — the moment the user has stopped
 writing. `Tests/ProblemLayout/ProblemLayoutStabilityTests.swift` pins this.
+
+A retag is the exception because it changes *which cell* ink belongs to, so the
+pinned grid is plainly wrong afterwards. `reflowLayoutAfterRetag()` re-arranges
+(animated, focus kept) once — at the end of a retag sweep, after Reassign, and
+after undoing/redoing a `.retagged` edit — never per sample, so it stays out of
+the feedback loop. If the placement moves, the selection is dropped (its frame
+is traced in laid-out space); otherwise it is only retraced.
+`Tests/Canvas/ProblemLayoutRetagReflowTests.swift`.
 `recordEdit()` deliberately does **not** touch the layout.
 
 ### The focus box
@@ -888,6 +903,51 @@ not reset it), and `animate(to:)` always starts from the **current** placement,
 which is what makes an interrupted transition reverse smoothly. The completion
 only fires if the run actually lands, which is what lets `frameNodeID` survive
 its own exit animation and then be torn down.
+
+### Switching straight from one problem to another
+
+`focus(nodeID:)` on a different problem while a frame is on screen (open, or
+still closing from an exit) keeps the old frame as `closingFrame` — its node,
+its box, and its bubble re-read *after* focus moves so it is unfrozen — and
+calls `animator.handOffFocusFrame()`, which moves `focusProgress` into
+`closingFrameProgress` and restarts `focusProgress` at 0. The same single
+display-link run then closes the old frame while opening the new one; there is
+no second timer and no per-frame check when no hand-off is happening (the extra
+lerp is skipped unless the run started with a closing frame). `retireFrame()`
+drops `closingFrame` when the run lands. `CanvasSelectionLayer` draws it as a
+second `ProblemFocusFrameView`, and `ProblemBoundsView` fades that problem's
+bubble back in. `Tests/ProblemLayout/ProblemFocusSwitchTests.swift`,
+`ProblemLayoutAnimatorHandOffTests.swift`.
+
+### The focus follows the picker
+
+`ProblemTaggingModel.onPickerSelectionChanged` fires when the **wheel or the
+outline** moves the selection — not for `selectNode` / `clearSelection`, which
+are the canvas's own taps. That split is load-bearing: `handleArrangedCanvasTap`
+selects the node *before* deciding focus, so if its selection fired the hook the
+tap would focus a problem, then see it as already focused and close it again.
+
+`CanvasViewModel.followPickedProblem` does nothing unless a problem is focused.
+If the picked problem has ink it is focused (the hand-off above closes the old
+box); otherwise — an empty problem, or the dash — the focus just closes. One
+pass over the ink per picker change. `Tests/Canvas/ProblemFocusFollowsPickerTests.swift`.
+
+### The first stroke of a new problem opens its box
+
+`beginInkStroke` → `openBoxForFirstStroke`: with the layout on, a stroke filed
+under a problem that has **no grid slot** (`problemLayout.hasGridSlot`, a
+dictionary lookup — every other stroke stops there) calls
+`ProblemLayoutModel.focusUnarrangedProblem`. That focuses it with
+`remeasure: false` — it runs inside the pencil gesture, so the pinned-offset
+rule applies: the new problem stays at offset zero, which is what its first
+sample was stored against. The push needs a cell, so `unarrangedFocusPath`
+stands in for one (`ProblemFocusLayout.resolve(focusedCell:…)`; the push only
+reads row/column/stack). There is no traced bubble yet, so the frame grows out
+of a pill around the padded first mark instead of popping in. The box then
+follows the pen as usual, neighbours are pushed on pen-up, and the problem takes
+a real grid slot when the focus is released. The frame's tint falls back to the
+problem's top-level index when it has no region yet.
+`Tests/Canvas/ProblemFirstStrokeFocusTests.swift`.
 
 ### Tapping, while arranged
 

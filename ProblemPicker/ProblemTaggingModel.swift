@@ -23,6 +23,12 @@ final class ProblemTaggingModel {
     /// the way pan and zoom do.
     var onOutlineChanged: (() -> Void)?
 
+    /// Called when the *picker itself* — the wheel or the outline — moves the
+    /// selection, with the node it now points at. Canvas taps select through
+    /// `selectNode` / `clearSelection` and deliberately do not fire it: the
+    /// canvas decides for itself what a tap does to the focus.
+    var onPickerSelectionChanged: ((UUID?) -> Void)?
+
     /// Bumped on every selection or structure change, with the level that moved.
     /// The wheel watches it so a change made anywhere else — a document opening,
     /// a drop in the outline — scrolls the columns to match.
@@ -208,19 +214,20 @@ final class ProblemTaggingModel {
     /// tapping the blank paper outside every problem's region means.
     func clearSelection() {
         guard !selectedPath.isEmpty else { return }
-        select([], changedLevel: 0)
+        select([], changedLevel: 0, fromPicker: false)
     }
 
     func selectNode(_ nodeID: UUID) {
         guard let path = outline.path(ofNode: nodeID) else { return }
-        select(path)
+        select(path, changedLevel: max(path.count - 1, 0), fromPicker: false)
     }
 
-    private func select(_ path: ProblemPath, changedLevel: Int) {
+    private func select(_ path: ProblemPath, changedLevel: Int, fromPicker: Bool = true) {
         selectedPath = path
         rememberSelectionPath()
         lastChangedLevel = changedLevel
         changeTick += 1
+        if fromPicker { onPickerSelectionChanged?(selectedNodeID) }
     }
 
     /// Records the choice made at every level of the new selection — including

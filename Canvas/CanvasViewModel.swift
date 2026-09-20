@@ -42,6 +42,9 @@ final class CanvasViewModel {
         problemLayout.contoursProvider = { [weak self] nodeID in
             self?.problemRegions.first { $0.nodeID == nodeID }?.contours ?? []
         }
+        problems.onPickerSelectionChanged = { [weak self] nodeID in
+            self?.followPickedProblem(nodeID)
+        }
     }
 
     // MARK: - Automatic layout
@@ -122,12 +125,48 @@ final class CanvasViewModel {
         problemLayout.clearFocus()
     }
 
+    /// Moves the focus along with the picker. Only while a problem is focused:
+    /// the box closes, and the newly picked problem opens only if it has ink
+    /// to open around — an empty one opens on its first stroke instead
+    /// (`openBoxForFirstStroke`).
+    ///
+    /// One cheap pass over the ink per picker change, and nothing at all when
+    /// nothing is focused.
+    private func followPickedProblem(_ nodeID: UUID?) {
+        guard problemLayout.isFocused, nodeID != problemLayout.focusedNodeID else { return }
+        if let nodeID, StrokeRasterizer.inkStrokes(strokes).contains(where: { $0.problemNodeID == nodeID }) {
+            focusProblem(nodeID)
+        } else {
+            exitProblemFocus()
+        }
+    }
+
+    /// Opens a box, animated, when the pen starts the first mark of a problem
+    /// that has no place in the arranged grid yet. The layout model rejects
+    /// anything else with a dictionary lookup, so every other stroke pays
+    /// almost nothing for this.
+    private func openBoxForFirstStroke(_ stroke: Stroke) {
+        guard problemLayout.isEnabled,
+              let nodeID = stroke.problemNodeID,
+              nodeID != problemLayout.focusedNodeID,
+              !problemLayout.hasGridSlot(for: nodeID),
+              let path = problems.outline.path(ofNode: nodeID)
+        else { return }
+        let padding = ProblemBoundsStyle.padding
+        problemLayout.focusUnarrangedProblem(
+            nodeID: nodeID,
+            path: path,
+            inkBounds: stroke.canvasBounds.insetBy(dx: -padding, dy: -padding)
+        )
+    }
+
     /// The colour the focus frame is drawn in — the focused problem's own tint,
     /// so the box reads as that problem's room rather than as generic chrome.
-    /// Falls back to the attention red for a problem with no traced region yet.
-    var focusFrameTint: Color {
-        guard let nodeID = problemLayout.frameNodeID,
-              let problemIndex = problemRegions.first(where: { $0.nodeID == nodeID })?.problemIndex
+    /// A problem with no traced region yet takes its tint from its place in the
+    /// outline; the attention red is only for a node the outline has lost.
+    func focusFrameTint(forNode nodeID: UUID) -> Color {
+        guard let problemIndex = problemRegions.first(where: { $0.nodeID == nodeID })?.problemIndex
+                ?? problems.outline.path(ofNode: nodeID)?.first
         else { return AppTint.active }
         return ProblemTintPalette.color(forProblemIndex: problemIndex)
     }
@@ -277,6 +316,9 @@ final class CanvasViewModel {
         }
         guard !retagChangesInGesture.isEmpty else { return }
         pushUndoEntry(.retagged(retagChangesInGesture))
+        // Once, at the end of the sweep: re-flowing per sample would slide the
+        // page out from under the marks still being swept.
+        reflowLayoutAfterRetag()
         recordEdit()
     }
 
@@ -666,6 +708,10 @@ final class CanvasViewModel {
         )
         stroke.appendPoint(stored(point))
         activeStroke = stroke
+        // After the offset is captured: a problem with no grid slot sits at
+        // offset zero both before and after its box opens, so the mark stays
+        // under the nib.
+        openBoxForFirstStroke(stroke)
         noteFocusedInkGrowth()
     }
 
@@ -699,6 +745,37 @@ final class CanvasViewModel {
     private func remeasureFocusedProblem() {
         guard let nodeID = problemLayout.focusedNodeID else { return }
         problemLayout.remeasureFocusedInk(inkBounds(ofProblem: nodeID))
+    }
+
+    /// Brings the arrangement back in line after ink has been re-filed under a
+    /// different problem. Without it the grid stays as it was measured before
+    /// the retag until the user leaves and re-enters focus.
+    ///
+    /// The selection frame is traced where the ink is drawn, so if the page is
+    /// about to move it is dropped — the same thing toggling and focusing do —
+    /// and if nothing moves it is only retraced, since the re-filed marks are
+    /// now drawn at their new problem's offset.
+    private func reflowLayoutAfterRetag() {
+        guard problemLayout.isEnabled else { return }
+        let placementBefore = problemLayout.settledPlacement
+        let focusedInkBounds = problemLayout.focusedNodeID.map(inkBounds(ofProblem:)) ?? .null
+        problemLayout.reflowAfterRetag(focusedInkBounds: focusedInkBounds)
+        if problemLayout.settledPlacement != placementBefore {
+            clearSelection()
+        } else if hasSelection {
+            retraceSelectionOutline()
+        }
+    }
+
+    /// The layout follow-up an undone or redone edit needs. A retag changes
+    /// which cell ink belongs to and so re-flows the grid; anything else keeps
+    /// the grid pinned and only lets the focus box resize.
+    private func updateLayout(afterReplaying edit: CanvasEdit) {
+        if case .retagged = edit {
+            reflowLayoutAfterRetag()
+        } else {
+            remeasureFocusedProblem()
+        }
     }
 
     /// The canvas-space box one problem's ink covers, in stored space, padded to
@@ -1028,12 +1105,27 @@ final class CanvasViewModel {
     ///   single tap is what steps out of a problem.
     @discardableResult
     func handleCanvasDoubleTap(at canvasPoint: CGPoint) -> Bool {
-        guard let region = problemRegion(containing: canvasPoint) else { return false }
+        guard let nodeID = problemNode(forDoubleTapAt: canvasPoint) else { return false }
         // The wheel follows the ink that was picked up, so whatever the menu's
         // Reassign is measured against is the problem the user is looking at.
-        problems.selectNode(region.nodeID)
-        select(strokeIDs: Set(inkFiled(underProblem: region.nodeID).map(\.id)))
+        problems.selectNode(nodeID)
+        select(strokeIDs: Set(inkFiled(underProblem: nodeID).map(\.id)))
         return true
+    }
+
+    /// The problem a double tap at this point would pick up, or nil where a
+    /// double tap means nothing.
+    ///
+    /// The focus box counts as the focused problem's own even where no bubble
+    /// reaches: its bubble is frozen at the shape it had when the box opened,
+    /// so new work written in the box — and the room around it — lies outside
+    /// the traced region, and the box is what the user sees as the problem.
+    func problemNode(forDoubleTapAt canvasPoint: CGPoint) -> UUID? {
+        if let region = problemRegion(containing: canvasPoint) { return region.nodeID }
+        guard let focusedNodeID = problemLayout.focusedNodeID,
+              problemLayout.focusBox.contains(canvasPoint)
+        else { return nil }
+        return focusedNodeID
     }
 
     /// The ink a problem's region was traced from — drawing tools only, and never
@@ -1100,6 +1192,7 @@ final class CanvasViewModel {
         retag.apply(to: &strokes)
         pushUndoEntry(retag)
         hideSelectionMenu()
+        reflowLayoutAfterRetag()
         recordEdit()
     }
 
@@ -1120,7 +1213,7 @@ final class CanvasViewModel {
         edit.revert(on: &strokes)
         redoStack.append(edit)
         pruneSelection()
-        remeasureFocusedProblem()
+        updateLayout(afterReplaying: edit)
         recordEdit()
     }
 
@@ -1129,7 +1222,7 @@ final class CanvasViewModel {
         edit.apply(to: &strokes)
         undoStack.append(edit)
         pruneSelection()
-        remeasureFocusedProblem()
+        updateLayout(afterReplaying: edit)
         recordEdit()
     }
 
