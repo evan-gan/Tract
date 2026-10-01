@@ -109,6 +109,37 @@ enum WorksheetNester {
         return best ?? sheet
     }
 
+    private static let fittingScaleIterations = 24
+
+    /// The largest scale, up to `ceiling`, at which a block fits on an empty
+    /// page by itself — badge and clearance included.
+    ///
+    /// - Returns: Nil when it fits at no positive scale, which only happens if
+    ///   the badge and padding alone are wider than the paper.
+    static func largestScaleFittingEmptyPage(
+        _ block: WorksheetBlock,
+        page: WorksheetPageGeometry,
+        padding: CGFloat,
+        ceiling: CGFloat
+    ) -> CGFloat? {
+        let fits = { (scale: CGFloat) in
+            nestOntoOneSheet([block], page: page, padding: padding, scale: scale) != nil
+        }
+        if fits(ceiling) { return ceiling }
+
+        var largestThatFits: CGFloat = 0
+        var smallestThatDoesNot = ceiling
+        for _ in 0 ..< fittingScaleIterations {
+            let candidate = (largestThatFits + smallestThatDoesNot) / 2
+            if fits(candidate) {
+                largestThatFits = candidate
+            } else {
+                smallestThatDoesNot = candidate
+            }
+        }
+        return largestThatFits > 0 ? largestThatFits : nil
+    }
+
     /// Nests everything onto a single sheet, or reports failure by returning nil.
     private static func nestOntoOneSheet(
         _ blocks: [WorksheetBlock],

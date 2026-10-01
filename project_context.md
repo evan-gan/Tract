@@ -227,12 +227,12 @@ Tract/
 │   │   ├── WorksheetBadge.swift          # The problem-number badge as geometry, reserved before anything is placed
 │   │   ├── WorksheetBlock.swift          # ProblemGroups → blocks: thinned strokes, painted box, tension hull
 │   │   ├── WorksheetPlacement.swift      # A block sized and positioned; hulls, ink transform, growth anchors
-│   │   ├── WorksheetNester.swift         # The packer (height map + column profiles) and the per-page refit
+│   │   ├── WorksheetNester.swift         # The packer (height map + column profiles), per-page refit, per-problem fit limit
 │   │   ├── WorksheetScaleSearch.swift    # Fewest pages first, then the largest text that fits them
 │   │   ├── WorksheetRelaxer.swift        # Round-robin growth of individual problems into what is still free
 │   │   ├── WorksheetSeparators.swift     # The dashed lines dividing the sheet into a region per problem
 │   │   ├── WorksheetPalette.swift        # Badge, ring and separator colours (the ink is never recoloured)
-│   │   ├── WorksheetLayoutEngine.swift   # The pipeline: block → scale → nest → refit → grow
+│   │   ├── WorksheetLayoutEngine.swift   # The pipeline: block → scale → nest → refit → grow; oversized problems get their own page
 │   │   └── WorksheetRenderer.swift       # Paints one sheet: separators, ink, badges
 │   ├── PNGExporter.swift         # UIGraphicsImageRenderer
 │   ├── DrawingDataSchema.swift   # The raw-data export's *published* JSON shape (versioned contract)
@@ -1689,7 +1689,13 @@ The pipeline, in `WorksheetLayoutEngine.sheets`:
    there is a page to measure against.
 3. **Choose the scale** (`WorksheetScaleSearch`) — fewest pages first, then the
    largest text that still fits that many pages, bisected against the page count
-   at the 0.8× readability floor.
+   at the 0.8× readability floor. First, `WorksheetNester.largestScaleFittingEmptyPage`
+   finds each problem's own limit. The search is capped at the tightest of those,
+   because an overflowing problem still counts as one page and the search would
+   otherwise run a lone large problem off the paper at 4×. A problem that does
+   not fit even at the floor is split out of the run onto a **page of its own**,
+   shrunk to fit — below the floor but never cut off — and the problems around it
+   keep the normal uniform scale, in reading order.
 4. **Nest** (`WorksheetNester`) — the page is sliced into 3pt columns with a
    running height map; each shape carries the same slicing of itself, so it is
    dropped until *some* column touches rather than until its corner does. That is

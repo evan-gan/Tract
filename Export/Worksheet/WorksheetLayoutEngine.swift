@@ -30,20 +30,33 @@ enum WorksheetLayoutEngine {
     ) -> [WorksheetSheet] {
         guard !blocks.isEmpty else { return [] }
 
+        let fittingScales = blocks.map {
+            WorksheetNester.largestScaleFittingEmptyPage(
+                $0,
+                page: page,
+                padding: options.padding,
+                ceiling: options.maximumScale
+            )
+        }
+        let segments = segments(of: blocks, fittingScales: fittingScales, minimumScale: options.minimumScale)
+        // The page-count search alone would happily pick a scale that pushes a
+        // big problem off the paper, since an overflowing problem still counts
+        // as one page. Capping it at the tightest problem's own limit means every
+        // problem sharing the uniform scale is guaranteed to fit.
+        let uniformCeiling = fittingScales
+            .compactMap { $0 }
+            .filter { $0 >= options.minimumScale }
+            .min() ?? options.maximumScale
+
         let uniformScale = WorksheetScaleSearch.uniformScale(
             measurePageCount: { scale in
-                WorksheetNester.nest(blocks, page: page, padding: options.padding, scale: scale).count
+                nest(segments, page: page, padding: options.padding, uniformScale: scale).count
             },
             minimumScale: options.minimumScale,
-            maximumScale: options.maximumScale
+            maximumScale: uniformCeiling
         )
 
-        var sheets = WorksheetNester.nest(
-            blocks,
-            page: page,
-            padding: options.padding,
-            scale: uniformScale
-        )
+        var sheets = nest(segments, page: page, padding: options.padding, uniformScale: uniformScale)
         // Coarse then fine: re-nest each page at the largest scale its own
         // problems allow, then grow individual problems into what is still free.
         if options.refitsPages {
@@ -64,4 +77,60 @@ enum WorksheetLayoutEngine {
         }
         return sheets
     }
+
+    /// Splits the reading order into runs that share the uniform scale, broken
+    /// by any problem too big to fit a page at the readability floor. Those get
+    /// a sheet to themselves, shrunk to fit — smaller than the floor, but whole,
+    /// which beats a problem cut off at the margin.
+    private static func segments(
+        of blocks: [WorksheetBlock],
+        fittingScales: [CGFloat?],
+        minimumScale: CGFloat
+    ) -> [WorksheetSegment] {
+        var segments: [WorksheetSegment] = []
+        var run: [WorksheetBlock] = []
+
+        for (block, fittingScale) in zip(blocks, fittingScales) {
+            if let fittingScale, fittingScale >= minimumScale {
+                run.append(block)
+                continue
+            }
+            if !run.isEmpty {
+                segments.append(.shared(run))
+                run = []
+            }
+            // A problem that fits at no scale at all keeps the old fallback:
+            // drawn at the floor from the content origin, rather than dropped.
+            segments.append(.alone(block, scale: fittingScale ?? minimumScale))
+        }
+        if !run.isEmpty { segments.append(.shared(run)) }
+        return segments
+    }
+
+    /// Lays each segment out in order, so pages still read 1a, 1b, 1c … even
+    /// with an oversized problem's own page between them.
+    private static func nest(
+        _ segments: [WorksheetSegment],
+        page: WorksheetPageGeometry,
+        padding: CGFloat,
+        uniformScale: CGFloat
+    ) -> [WorksheetSheet] {
+        segments.flatMap { segment in
+            switch segment {
+            case .shared(let blocks):
+                WorksheetNester.nest(blocks, page: page, padding: padding, scale: uniformScale)
+            case .alone(let block, let scale):
+                WorksheetNester.nest([block], page: page, padding: padding, scale: scale)
+            }
+        }
+    }
+}
+
+/// A stretch of the reading order and how it is scaled.
+private enum WorksheetSegment {
+    /// Problems nested together at the run-wide uniform scale.
+    case shared([WorksheetBlock])
+    /// One problem too big for the uniform scale, on its own sheet at the
+    /// largest scale that fits it.
+    case alone(WorksheetBlock, scale: CGFloat)
 }
