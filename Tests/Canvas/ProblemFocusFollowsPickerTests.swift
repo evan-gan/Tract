@@ -56,10 +56,20 @@ struct ProblemFocusFollowsPickerTests {
         #expect(viewModel.problemLayout.focusedNodeID == nil)
     }
 
-    @Test("Picking a problem while nothing is focused opens nothing")
-    func pickingWithoutFocusDoesNothing() {
-        let (viewModel, _, _) = focusedCanvas()
+    @Test("Picking an inked problem on an arranged page with nothing focused opens it")
+    func pickingWithoutFocusOpensTheProblem() {
+        let (viewModel, _, second) = focusedCanvas()
         viewModel.exitProblemFocus()
+
+        viewModel.problems.selectOption(1, atLevel: 0)
+
+        #expect(viewModel.problemLayout.focusedNodeID == second)
+    }
+
+    @Test("Picking a problem while the page is not arranged opens nothing")
+    func pickingWhileUnarrangedDoesNothing() {
+        let (viewModel, _, _) = focusedCanvas()
+        viewModel.toggleProblemLayout()
 
         viewModel.problems.selectOption(1, atLevel: 0)
 

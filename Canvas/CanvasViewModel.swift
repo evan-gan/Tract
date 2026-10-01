@@ -106,11 +106,20 @@ final class CanvasViewModel {
         }
     }
 
+    /// Whether a document loaded from disk starts with the page arranged. A
+    /// bare `CanvasViewModel()` still starts unarranged, so tests opt in.
+    static let opensDocumentsArranged = true
+
     /// Flips the arrangement on or off. The selection is dropped because its
     /// traced frame describes ink at positions that are about to move.
+    ///
+    /// Turning it on with a problem already picked opens that problem, the
+    /// same as picking it in the wheel would — the user was already pointing
+    /// at it, so there is no reason to make them tap it again.
     func toggleProblemLayout() {
         clearSelection()
         problemLayout.toggle()
+        focusPickedProblemIfInked()
     }
 
     /// Opens a problem for editing, pushing its neighbours clear.
@@ -125,20 +134,34 @@ final class CanvasViewModel {
         problemLayout.clearFocus()
     }
 
-    /// Moves the focus along with the picker. Only while a problem is focused:
-    /// the box closes, and the newly picked problem opens only if it has ink
-    /// to open around — an empty one opens on its first stroke instead
-    /// (`openBoxForFirstStroke`).
+    /// Moves the focus along with the picker whenever the page is arranged,
+    /// whether or not something is focused yet: any open box closes, and the
+    /// newly picked problem opens only if it has ink to open around — an empty
+    /// one opens on its first stroke instead (`openBoxForFirstStroke`).
     ///
     /// One cheap pass over the ink per picker change, and nothing at all when
-    /// nothing is focused.
+    /// the page is not arranged.
     private func followPickedProblem(_ nodeID: UUID?) {
-        guard problemLayout.isFocused, nodeID != problemLayout.focusedNodeID else { return }
-        if let nodeID, StrokeRasterizer.inkStrokes(strokes).contains(where: { $0.problemNodeID == nodeID }) {
+        guard problemLayout.isEnabled, nodeID != problemLayout.focusedNodeID else { return }
+        if let nodeID, problemHasInk(nodeID) {
             focusProblem(nodeID)
-        } else {
+        } else if problemLayout.isFocused {
             exitProblemFocus()
         }
+    }
+
+    /// Opens the problem the wheel is on, if the page is arranged and that
+    /// problem has ink to open around.
+    private func focusPickedProblemIfInked() {
+        guard problemLayout.isEnabled,
+              let nodeID = problems.selectedNodeID,
+              problemHasInk(nodeID)
+        else { return }
+        focusProblem(nodeID)
+    }
+
+    private func problemHasInk(_ nodeID: UUID) -> Bool {
+        StrokeRasterizer.inkStrokes(strokes).contains { $0.problemNodeID == nodeID }
     }
 
     /// Opens a box, animated, when the pen starts the first mark of a problem
@@ -335,8 +358,9 @@ final class CanvasViewModel {
         strokes = loadedStrokes
         problems.restore(outline: outline)
         // The arrangement describes one page; it does not follow the user into
-        // the next document they open.
-        problemLayout.reset()
+        // the next document they open. Every document opens arranged, because
+        // working one problem at a time is the app's normal way of editing.
+        problemLayout.reset(enabled: Self.opensDocumentsArranged)
         backgroundStyle = background
         activeStroke = nil
         undoStack.removeAll()

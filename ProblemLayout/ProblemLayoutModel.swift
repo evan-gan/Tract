@@ -92,16 +92,24 @@ final class ProblemLayoutModel {
         setEnabled(!isEnabled)
     }
 
-    /// Back to off, nothing focused, nothing animating. What opening a
-    /// different document means: the arrangement is a way of looking at one
-    /// page and carries nothing over to the next.
-    func reset() {
+    /// Back to a fresh start — nothing focused, nothing animating, the toggle
+    /// at `enabled`. What opening a different document means: the arrangement
+    /// is a way of looking at one page and carries nothing over to the next.
+    ///
+    /// - Parameter enabled: Whether the page opens arranged. When it does, the
+    ///   grid is measured and settled at once, so the document appears already
+    ///   laid out rather than animating into place on open.
+    func reset(enabled: Bool = false) {
         animator.stop()
-        isEnabled = false
+        isEnabled = enabled
         arrangement = .empty
         clearFocusState()
         retireFrame()
-        animator.settle(to: .identity, focusProgress: 0)
+        if enabled {
+            rebuild(animated: false)
+        } else {
+            animator.settle(to: .identity, focusProgress: 0)
+        }
     }
 
     // MARK: - Focus

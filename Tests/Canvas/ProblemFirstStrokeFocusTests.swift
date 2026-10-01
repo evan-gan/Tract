@@ -63,6 +63,9 @@ struct ProblemFirstStrokeFocusTests {
     func inkedProblemDoesNotOpen() {
         let (viewModel, inked, _) = arrangedCanvasOnEmptyProblem()
         viewModel.problems.selectOption(0, atLevel: 0)
+        // Picking an inked problem opens it by itself; close it so only the
+        // stroke is under test.
+        viewModel.exitProblemFocus()
 
         SelectionFixtures.drawLine(viewModel, from: CGPoint(x: 0, y: 520), to: CGPoint(x: 50, y: 520))
 

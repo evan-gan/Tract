@@ -927,10 +927,25 @@ are the canvas's own taps. That split is load-bearing: `handleArrangedCanvasTap`
 selects the node *before* deciding focus, so if its selection fired the hook the
 tap would focus a problem, then see it as already focused and close it again.
 
-`CanvasViewModel.followPickedProblem` does nothing unless a problem is focused.
-If the picked problem has ink it is focused (the hand-off above closes the old
-box); otherwise — an empty problem, or the dash — the focus just closes. One
-pass over the ink per picker change. `Tests/Canvas/ProblemFocusFollowsPickerTests.swift`.
+`CanvasViewModel.followPickedProblem` does nothing unless the page is arranged
+(focused or not). If the picked problem has ink it is focused (the hand-off
+above closes any old box); otherwise — an empty problem, or the dash — any open
+focus just closes. One pass over the ink per picker change.
+`Tests/Canvas/ProblemFocusFollowsPickerTests.swift`.
+
+Switching the arrangement **on** does the same for whatever the wheel is already
+on (`toggleProblemLayout` → `focusPickedProblemIfInked`), so turning it on with an
+inked problem picked opens that problem. `Tests/Canvas/ProblemLayoutToggleFocusTests.swift`.
+
+### Documents open arranged
+
+`CanvasViewModel.restore` calls `problemLayout.reset(enabled:
+CanvasViewModel.opensDocumentsArranged)` (true), so every document loaded from
+disk opens with the grid on. `reset(enabled: true)` measures and *settles* the
+grid (no animation), so the page appears already laid out. Nothing is focused on
+open because `restore` clears the picker. A bare `CanvasViewModel()` still starts
+**unarranged** — the unit tests rely on that and switch it on with
+`toggleProblemLayout()`.
 
 ### The first stroke of a new problem opens its box
 

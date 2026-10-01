@@ -7,3 +7,5 @@ idea: Also fix re-assign to use the normal picker model & give instructions to j
 Fix export clipping big stuff & make the screen more efficient/clear layout
 
 Zoom past 400 with a bounce back
+
+Copy strokes

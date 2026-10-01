@@ -137,6 +137,8 @@ struct ProblemDoubleTapSelectionTests {
     func noFocusBoxMeansNothingSelected() {
         let (viewModel, _, _) = canvasWithTwoProblems()
         viewModel.toggleProblemLayout()
+        // Arranging opens the picked problem; step back out of it.
+        viewModel.exitProblemFocus()
 
         #expect(viewModel.problemNode(forDoubleTapAt: blankPaper) == nil)
     }
