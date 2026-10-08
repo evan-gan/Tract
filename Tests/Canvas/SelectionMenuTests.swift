@@ -84,6 +84,31 @@ struct SelectionMenuTests {
         #expect(viewModel.strokes.first?.points.first?.position == CGPoint(x: 120, y: 20))
     }
 
+    @Test("A pencil that skids inside its tap circle is a tap: the ink stays put and the menu opens")
+    func pencilInsideTapCircleIsATap() {
+        let viewModel = canvasWithSelectedLine()
+        viewModel.beginStroke(with: StrokeFixtures.point(at: CGPoint(x: 40, y: 40)))
+        viewModel.continueStroke(with: StrokeFixtures.point(at: CGPoint(x: 44, y: 43)))
+        #expect(viewModel.selectionDragOffset == .zero)
+        viewModel.endStroke()
+
+        #expect(viewModel.strokes.first?.points.first?.position == CGPoint(x: 20, y: 20))
+        #expect(viewModel.isSelectionMenuVisible)
+    }
+
+    @Test("A pencil leaving its tap circle drags the selection straight to the nib")
+    func pencilLeavingTapCircleDragsWithoutLag() {
+        let viewModel = canvasWithSelectedLine()
+        viewModel.beginStroke(with: StrokeFixtures.point(at: CGPoint(x: 40, y: 40)))
+        viewModel.continueStroke(with: StrokeFixtures.point(at: CGPoint(x: 52, y: 40)))
+        // The whole way from touchdown, not just the part past the circle's edge.
+        #expect(viewModel.selectionDragOffset == CGPoint(x: 12, y: 0))
+        viewModel.endStroke()
+
+        #expect(viewModel.strokes.first?.points.first?.position == CGPoint(x: 32, y: 20))
+        #expect(viewModel.isSelectionMenuVisible == false)
+    }
+
     @Test("A drag closes a menu that was already open")
     func dragClosesAnOpenMenu() {
         let viewModel = canvasWithSelectedLine()

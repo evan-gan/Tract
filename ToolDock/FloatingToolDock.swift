@@ -59,11 +59,15 @@ struct FloatingToolDock: View {
     /// Taps survive because of the minimum distance — the drag never recognises
     /// without real movement, so the button underneath keeps the touch. Once it
     /// does recognise, that button's press is cancelled, so dropping the dock on
-    /// a colour swatch cannot also change the ink.
+    /// a colour swatch cannot also change the ink. The distance is the same tap
+    /// circle a selection or pin drag uses, so every drag in the app starts alike.
     private var dragGesture: some Gesture {
         // Reading the location in the dock's own space is what lets the quadrant
         // test work directly against the container the dock moves inside.
-        DragGesture(minimumDistance: 8, coordinateSpace: .named(Self.dockSpace))
+        DragGesture(
+            minimumDistance: SelectionTouchClassifier.tapRadius,
+            coordinateSpace: .named(Self.dockSpace)
+        )
             .onChanged { value in
                 if !isDragging {
                     withAnimation(Self.liftAnimation) { isDragging = true }

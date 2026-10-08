@@ -154,9 +154,11 @@ struct PinnedReferenceCard: View {
     // MARK: - Gestures
 
     /// Global coordinates: the card moves under the finger as it is dragged, so
-    /// a translation measured in its own space would chase itself.
+    /// a translation measured in its own space would chase itself. The move
+    /// starts at the same tap circle as a selection drag, so the two feel alike;
+    /// the translation is measured from touchdown, so the card jumps to the nib.
     private var moveGesture: some Gesture {
-        DragGesture(coordinateSpace: .global)
+        DragGesture(minimumDistance: SelectionTouchClassifier.tapRadius, coordinateSpace: .global)
             .updating($moveTranslation) { value, translation, _ in translation = value.translation }
             .onEnded { value in
                 let moved = CGPoint(

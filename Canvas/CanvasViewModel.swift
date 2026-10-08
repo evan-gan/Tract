@@ -409,6 +409,7 @@ final class CanvasViewModel {
     /// may rest, before it stops counting as a tap. Both have to hold: a tap is
     /// on and off again quickly without going anywhere, and anything else is a
     /// drag that must not pop the action menu open under the moving nib.
+    /// The pencil uses its own tap circle instead — see `SelectionTouchClassifier`.
     private static let selectionTapMovementLimit: CGFloat = 6
     private static let selectionTapDurationLimit: TimeInterval = 0.4
 
@@ -644,6 +645,11 @@ final class CanvasViewModel {
     /// When the current selection touch landed, so a brief one can be told from a
     /// deliberate press that happened not to move.
     private var selectionDragStartTime: Date?
+    /// Tells a pencil tap on the selection from a pencil drag by whether the nib
+    /// leaves its tap circle. Only
+    /// set while the pencil holds the selection: a finger's pan recognizer has
+    /// already decided it is a drag before it reaches the view model.
+    private var pencilSelectionTouch: SelectionTouchClassifier?
 
     // MARK: - Stroke lifecycle
 
@@ -914,16 +920,26 @@ final class CanvasViewModel {
     private func beginLassoOrSelectionDrag(at canvasPoint: CGPoint) {
         if selectionContains(canvasPoint) {
             beginSelectionDrag(at: canvasPoint)
+            if isDraggingSelection {
+                pencilSelectionTouch = SelectionTouchClassifier(
+                    startLocation: canvasTransform.toScreen(canvasPoint)
+                )
+            }
         } else {
             beginLasso(at: canvasPoint)
         }
     }
 
+    /// While the nib is still inside its tap circle the selection stays still;
+    /// the moment it leaves, the touch is a drag and the selection jumps to it.
     private func continueLassoOrSelectionDrag(to canvasPoint: CGPoint) {
-        if isDraggingSelection {
-            updateSelectionDrag(to: canvasPoint)
-        } else {
+        guard isDraggingSelection else {
             appendLassoSample(canvasPoint)
+            return
+        }
+        let decision = pencilSelectionTouch?.addSample(at: canvasTransform.toScreen(canvasPoint))
+        if decision == .drag {
+            updateSelectionDrag(to: canvasPoint)
         }
     }
 
@@ -939,7 +955,11 @@ final class CanvasViewModel {
 
     private func endLassoOrSelectionDrag() {
         if isDraggingSelection {
-            endSelectionDrag()
+            if let decision = pencilSelectionTouch?.finish() {
+                finishSelectionDrag(asTap: decision == .tap)
+            } else {
+                endSelectionDrag()
+            }
         } else {
             commitLassoSelection()
         }
@@ -1025,9 +1045,12 @@ final class CanvasViewModel {
     /// A drag that never actually moved anything is not an edit either, so it
     /// pushes nothing.
     func endSelectionDrag() {
+        finishSelectionDrag(asTap: isTapLikeTouch)
+    }
+
+    private func finishSelectionDrag(asTap wasTap: Bool) {
         let offset = selectionDragOffset
         guard let dragOrigin = selectionDragOrigin else { return }
-        let wasTap = isTapLikeTouch
         cancelSelectionDrag()
 
         if wasTap {
@@ -1052,6 +1075,7 @@ final class CanvasViewModel {
         selectionDragOrigin = nil
         selectionDragStartTime = nil
         selectionDragOffset = .zero
+        pencilSelectionTouch = nil
     }
 
     /// Whether the touch in flight has already moved too far to be a tap. Measured

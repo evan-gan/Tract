@@ -54,6 +54,7 @@ Tract/
 │   ├── CanvasUIView.swift        # UIView — pencil touches, 1-finger pan, pinch, pencil hover
 │   ├── FingerPanGestureRecognizer.swift # One-finger canvas pan; palm-rejecting
 │   ├── FingerPanArbiter.swift    # Pure palm-vs-finger rules behind that recognizer
+│   ├── SelectionTouchClassifier.swift # Pencil on a selection: tap or drag, by whether the nib leaves an 8pt circle
 │   ├── CanvasRenderer.swift      # SwiftUI Canvas — committed ink and the live stroke, one layer each
 │   ├── StrokePathCache.swift     # Canvas-space Paths per stroke, so pan/zoom never re-traces ink
 │   ├── CanvasContentLayer.swift  # Paper → problem regions → ink; owns the fast-changing reads so chrome is not invalidated
@@ -463,8 +464,9 @@ panning and zooming back and forth. Pan and zoom never touch it.
   ink's aspect, floored at `minimumShortSide` so one line of writing is still
   grabbable. The ink is fitted into the card through the transform, so nib width
   scales with it.
-- **Gestures** live in `PinnedReferenceCard`: drag the body (finger or pencil),
-  pinch to scale about the pinch point like the canvas zoom
+- **Gestures** live in `PinnedReferenceCard`: drag the body (finger or pencil;
+  the move starts once the touch leaves the same `SelectionTouchClassifier.tapRadius`
+  circle a selection drag uses), pinch to scale about the pinch point like the canvas zoom
   (`PinnedReferenceGeometry.resizedAboutAnchor`), drag the bottom-trailing handle to resize with
   the top-leading corner held still, × to unpin. All of them run as
   `@GestureState` offsets and commit to `PinnedReferenceModel` only on end. A pin
@@ -527,9 +529,13 @@ panning and zooming back and forth. Pan and zoom never touch it.
   pinned; `PinnedReferenceUITests` drags, resizes and unpins it, and
   `./scripts/screenshot.sh … pinned` photographs it.
 
-- **A tap and a drag must not be confused.** Both arrive through the same
-  begin/update/end path, so `CanvasViewModel` tells them apart at the end of the
-  touch: under `selectionTapMovementLimit` (6 screen points, measured on screen so
+- **A tap and a drag must not be confused.** The *pencil* decides by a tap
+  circle (`SelectionTouchClassifier.tapRadius`, 8 screen points): while the nib
+  stays inside it the selection does not move; the moment it leaves, the touch is
+  a drag for good and the selection jumps straight to the nib. A touch that never
+  leaves is a tap and toggles the menu on lift. There is no time limit, so slow
+  drags work. The *finger* path still decides at the end of
+  the touch by distance and time: under `selectionTapMovementLimit` (6 screen points, measured on screen so
   the same flick reads the same way at every zoom) *and* under
   `selectionTapDurationLimit` (0.4 s) is a tap, and it opens the menu rather than
   committing a move. Travelling past the movement limit mid-touch closes an already
@@ -1998,12 +2004,12 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change how a pin looks or what its gestures do | `PinnedReferenceCard.swift`; the ink inside is `PinnedInkView.swift` |
 | Change the flash shown when a pin is tapped | Timing: `PinSourceFlash.swift`; outline: `PinnedSourceHighlightView.swift`; arrow: `PinnedSourceArrowView.swift` (placed by `PinnedReferenceGeometry.sourceArrowPlacement`) |
 | Change what gets pinned, or how pins are saved | `CanvasViewModel.pinSelection()` / `pinnedInk(for:)`; saving is `DocumentEditorSession.save()` → `DocumentMetadata.pinnedReferences` |
-| Change what counts as a tap rather than a drag | `selectionTapMovementLimit` / `selectionTapDurationLimit` in `CanvasViewModel.swift` |
+| Change what counts as a tap rather than a drag | Pencil: `tapRadius` in `SelectionTouchClassifier.swift`. Finger: `selectionTapMovementLimit` / `selectionTapDurationLimit` in `CanvasViewModel.swift` |
 | Change the dock's quick colours | `InkColor.dockPalette` in `InkColor.swift` |
 | Change how the dock snaps | `DockEdge.nearest(to:in:)` in `DockEdge.swift` |
 | Change how the active tool is marked | `DockToolButton.swift` — the glass selector, and the `GlassEffectContainer` it needs in `ToolCarouselView.swift` |
 | Change a tool glyph, or what the pen's tip shows | `ToolIconView.swift`; the ink is threaded in from `viewModel.strokeColor` via `ToolDockView` → `ToolCarouselView` → `DockToolButton` |
-| Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift` |
+| Change the dock's drag feel or settle speed | `settleAnimation` / `liftAnimation` in `FloatingToolDock.swift`; how far a touch travels before the drag starts is the shared `SelectionTouchClassifier.tapRadius` |
 | Change how ink weight responds to zoom | `CanvasTransform.toScreen(length:)` |
 | Change the hover preview's look | `PencilHoverDot.swift`; its size and colour come from `CanvasViewModel.pencilPreviewDiameter` / `pencilPreviewColor` |
 | Add a paper style, or re-colour one | A case in `CanvasBackgroundStyle.swift` + its entry in the private `Color` palette at the bottom of that file; the picker, the swatches and the dock button pick it up automatically |
