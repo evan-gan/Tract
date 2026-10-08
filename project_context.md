@@ -7,7 +7,7 @@ Infinite canvas vector note-taking app for iPad. Every stroke stores full Apple 
 ```bash
 ./scripts/build.sh                    # compile / type-check, unsigned
 ./scripts/test.sh                     # unit + UI tests on an iPad simulator (~5 min)
-./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportpicker|exportprogress|sharesheet|problempicker]
+./scripts/screenshot.sh [light|dark] [sim] [canvas|library|librarylist|folder|exportpicker|exportprogress|sharesheet|problempicker|pinned]
 ./scripts/deploy-device.sh            # signed build installed on a connected iPad
 xcodegen generate                     # after editing project.yml
 ```
@@ -58,6 +58,7 @@ Tract/
 │   ├── StrokePathCache.swift     # Canvas-space Paths per stroke, so pan/zoom never re-traces ink
 │   ├── CanvasContentLayer.swift  # Paper → problem regions → ink; owns the fast-changing reads so chrome is not invalidated
 │   ├── CanvasSelectionLayer.swift # Canvas-tracking chrome over the ink: lasso loop, selection outline, selection action menu
+│   ├── CanvasPinnedReferenceLayer.swift # The pinned references, in screen space over everything but the glass chrome
 │   ├── PencilHoverDot.swift      # The hover dot as a CALayer — moved inside the hover callback, not by SwiftUI
 │   ├── PencilHoverDotView.swift  # Hosts that layer above the selection chrome, on the canvas view's own frame
 │   ├── CanvasZoomIndicator.swift # The zoom pill, wired to the live scale and the fit-to-drawing action
@@ -68,7 +69,8 @@ Tract/
 │   ├── CanvasGrid.swift          # Pure grid maths: spacing, dot radius, line width, pan phase, heavy-line rhythm
 │   ├── CanvasViewModel.swift     # @Observable: all canvas state, tool dispatch, undo/redo
 │   ├── CanvasEdit.swift          # One undoable ink edit (added/removed/moved/retagged) that replays itself either way
-│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–400%, screen↔canvas conversion, visible rect, `fitting(_:inViewOfSize:padding:)`
+│   ├── CanvasGlideAnimator.swift # Display-link eased pan between two translations (double-tap-a-pin glide)
+│   └── CanvasTransform.swift     # Pan/zoom value type, clamped 10%–400%, screen↔canvas conversion, visible rect, `fitting(_:inViewOfSize:padding:)`, `centering(_:inViewOfSize:)`
 │
 ├── Toolbar/                      # Fixed top chrome (close, title, save dot, problem wheel, export)
 │   ├── TopBarView.swift          # The one top pill: back, title, save dot, problem tag, Export
@@ -110,6 +112,16 @@ Tract/
 │   ├── ProblemFocusFrameStyle.swift # Dash, weight, corner radius and wash of the focus frame
 │   └── ProblemFocusFrameView.swift  # The boundary part way between a problem's bubble and its dashed edit box
 │
+├── Pinning/                      # Pinned references: selected ink floated over the canvas in screen space
+│   ├── PinnedReference.swift     # One pin: stroke ids + screen centre + longer side (Codable, saved in metadata)
+│   ├── PinnedReferenceModel.swift # @Observable: the pins, stacking order, pin/move/resize/unpin, prune on load
+│   ├── PinnedReferenceGeometry.swift # Pure: starting size (¼ screen), limits, aspect, clamping, corner resize, ink fit
+│   ├── PinnedReferenceCard.swift # One pin on screen: drag to move, pinch or corner handle to resize, × to unpin
+│   ├── PinnedInkView.swift       # Paints the pinned ink fitted to the card, paths cached
+│   ├── PinSourceFlash.swift      # The pulse-then-fade modifier the source outline and arrow share
+│   ├── PinnedSourceHighlightView.swift # Canvas-tracking outline flashed around a pin's source ink
+│   └── PinnedSourceArrowView.swift # Arrow on a card's edge pointing at off-screen source ink
+│
 ├── ProblemLayout/                # Arranging the page into a grid of problems (the "Arrange" toggle)
 │   ├── ProblemLayoutModel.swift  # @Observable: the toggle, which problem is focused, and the placement it all resolves to
 │   ├── ProblemLayoutPlacement.swift # The shift per problem — the only thing the rest of the app sees; `.identity` when off
@@ -122,7 +134,8 @@ Tract/
 │
 ├── Tests/                        # Swift Testing unit tests (./scripts/test.sh)
 │   ├── Support/                  # StrokeFixtures, SelectionFixtures (a canvas with ink already lassoed), TemporaryDirectory, PDFPageInspector (rasterises a page to check ink landed)
-│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, problem regions + the taps on them (single tap navigates, double tap selects the problem's ink), zoom-scaled widths + visible rect, zoom-to-fit maths, pencil hover, path cache, sample thinning
+│   ├── Pinning/                  # Pin geometry (sizes, clamps, corner resize, ink fit) + the pin model
+│   ├── Canvas/                   # Eraser, lasso, selection drag + action menu, pinning a selection, problem regions + the taps on them (single tap navigates, double tap selects the problem's ink), zoom-scaled widths + visible rect, zoom-to-fit maths, pencil hover, path cache, sample thinning
 │   ├── Document/                 # Store round trip, store resilience, editor session, thumbnails, folder tree + filing
 │   ├── Stroke/                   # StrokeGeometry hits, SelectionRegion standoff/splitting, ProblemRegion padding/bridging, problem tag format + notations
 │   ├── ProblemPicker/            # Outline structure + labels, wheel selection, drop resolving, retag/tint
@@ -135,6 +148,7 @@ Tract/
 │   ├── CanvasZoomUITests.swift   # Pinch limits, read back off the zoom pill
 │   ├── ProblemPickerUITests.swift # Wheel rows tapped, the dash, flicking a column
 │   ├── ExportShareSheetUITests.swift # Each layout/format in the export picker reaches a share sheet; cancelling exports nothing
+│   ├── PinnedReferenceUITests.swift # A seeded pin is dragged, corner-resized and unpinned with real touches
 │   └── CanvasSnapshotUITests.swift # Screenshot capture driven by scripts/screenshot.sh
 │
 ├── ProblemPicker/                # Tagging control in the top chrome (the wheel)
@@ -245,6 +259,7 @@ Tract/
 │   ├── CGRect+Spans.swift        # Containment that works for flat rects, which CGRect's own does not
 │   ├── AppTint.swift             # The shared attention red: active tool, lasso, selection
 │   ├── Color+Hex.swift           # Color(hex:), hexString, SIMD4<Float>(color:)
+│   ├── DisplayLinkProxy.swift    # NSObject target for CADisplayLink, shared by the layout and glide animators
 │   └── View+GlassChrome.swift    # .glassChrome() — shared Liquid Glass surface for all chrome
 │
 └── Assets.xcassets/              # AccentColor + AppIcon slots
@@ -424,8 +439,93 @@ over it, offering what can be done with the ink it holds:
 - **Delete** (`CanvasViewModel.deleteSelection()`) — one undo step, then the
   selection is dropped because there is nothing left to frame.
 
+- **Pin** (`CanvasViewModel.pinSelection()`) — floats the selected ink over the
+  canvas as a pinned reference (see "Pinned references" below) and drops the
+  selection. Not an edit: no undo entry, no revision bump.
+
 A second tap on the selection closes the menu again; a tap off it drops the
 selection, as it always did.
+
+### Pinned references
+
+A pin floats a copy-in-appearance of some earlier ink over the canvas, in
+**screen** space, so it can be read while writing a later problem without
+panning and zooming back and forth. Pan and zoom never touch it.
+
+- **A pin holds stroke ids, not strokes.** `PinnedReference` is ids + a screen
+  centre + the card's longer side. The ink is looked up live
+  (`CanvasViewModel.pinnedInk(for:)`), in its *stored* position — not the
+  arrangement's — so a pin does not reshuffle when focus moves to another problem,
+  and a correction to the original shows in the pin.
+- **Sizing.** A new pin's longer side is a quarter of the screen along the same
+  axis — the width for wide ink, the height for tall ink
+  (`PinnedReferenceGeometry.initialLongestSide`). The shorter side follows the
+  ink's aspect, floored at `minimumShortSide` so one line of writing is still
+  grabbable. The ink is fitted into the card through the transform, so nib width
+  scales with it.
+- **Gestures** live in `PinnedReferenceCard`: drag the body (finger or pencil),
+  pinch to scale about the pinch point like the canvas zoom
+  (`PinnedReferenceGeometry.resizedAboutAnchor`), drag the bottom-trailing handle to resize with
+  the top-leading corner held still, × to unpin. All of them run as
+  `@GestureState` offsets and commit to `PinnedReferenceModel` only on end. A pin
+  stops flush against the screen's edges — it can never be pushed partly out of
+  frame (`PinnedReferenceGeometry.clampedCenter`). A drag raises a pin when it
+  lands.
+- **Tapping a pin** (`CanvasViewModel.handlePinTap`): every tap raises the pin
+  and flashes a red outline around its source ink on the page — every tap, not
+  just one on the top pin, because pins that don't overlap give no sign which is
+  on top (`PinnedSourceHighlightView`, in `CanvasSelectionLayer`
+  so it tracks the canvas). The outline is the same rolling-ball shape the page
+  frames each problem with (`ProblemRegion` with `ProblemBoundsStyle`'s padding
+  and curve radius), one per problem the ink is filed under, traced **once per
+  tap** in `handlePinTap` (`PinnedReferenceGeometry.sourceOutlines`) and carried
+  on `PinSourceHighlight.outlines`; only the arrangement's offset is applied per
+  frame.
+  If none of that ink is on screen, the card also flashes an arrow on its edge
+  pointing at it (`PinnedSourceArrowView`; the target is measured at tap time so
+  the pin layer never reads the canvas transform). Both share the
+  pulse-then-fade in `PinSourceFlash`, keyed on
+  `PinnedReferenceModel.sourceHighlightSequence`; the views stay mounted because
+  a keyframe animator only plays on a trigger *change*. The flash is never
+  saved and touches no ink.
+- **Double-tapping a pin** (`CanvasViewModel.panToPinSource`) glides the canvas
+  over 1s — a pan at the current zoom (`CanvasTransform.centering`) — until the
+  pin's source ink, as drawn, is centred, then re-flashes it with no arrow on
+  arrival. The glide is `Canvas/CanvasGlideAnimator.swift`, a display link
+  stepping the translation (eased like the layout animator): `withAnimation`
+  cannot move the canvas, because the ink `Canvas` has animations switched off.
+  A finger pan or pinch calls `stopCanvasGlide()` in `CanvasUIView` so the page
+  never moves out from under a grab. Reduce Motion jumps instead. The arrow
+  is never shown for ink in view: `canvasTransform`'s `didSet` retires it
+  (`PinnedReferenceModel.clearSourceArrow`, flash not replayed) the moment any
+  pan or zoom brings the source on screen, and `PinnedSourceArrowView` fades it
+  out over about the pan's length rather than cutting it. The double
+  tap is a `simultaneousGesture` beside the single tap so single taps are never
+  delayed waiting for a second one.
+- **Placement.** New pins land top-leading, under the top bar, each further one
+  stepped right and down (`PinnedReferenceGeometry.initialCenter`).
+- **Arrival flight.** `pinSelection` records a `PinArrival` (the lassoed ink's
+  drawn centre on screen + the canvas zoom) on `PinnedReferenceModel.arrival`.
+  The new `PinnedReferenceCard` first renders scaled and shifted so its ink lies
+  exactly over the page's ink (`canvasScale / inkFitScale`), with its sheet,
+  border, shadow and controls invisible, then springs to its place as they fade
+  in, and calls `finishArrival` on landing so a rebuilt card never flies twice.
+  Reduce Motion skips the flight. Never saved; restored pins just appear.
+- **Layering.** `CanvasPinnedReferenceLayer` sits above the hover dot (a pencil
+  over a pin moves the pin, so a nib preview there would lie) and below the glass
+  chrome. Its controls are inside the card's bounds because SwiftUI does not
+  hit-test outside them.
+- **Erase and undo.** A pin whose ink is all erased draws nothing but is kept, so
+  undo brings it straight back. Dead ids are only pruned on load
+  (`PinnedReferenceModel.restore`).
+- **Saved like pan and zoom.** `DocumentMetadata.pinnedReferences` (optional, so
+  older documents load) rides along with the next save — always the flush on
+  close or backgrounding — without stamping `modifiedAt`. No schema bump: an
+  older build dropping pins loses no work.
+- **Testing.** XCUITest cannot lasso, so `-TractSeedPinnedReference` (with
+  `-TractSeedSampleDocuments`) opens the "Problem set" with its first problem
+  pinned; `PinnedReferenceUITests` drags, resizes and unpins it, and
+  `./scripts/screenshot.sh … pinned` photographs it.
 
 - **A tap and a drag must not be confused.** Both arrive through the same
   begin/update/end path, so `CanvasViewModel` tells them apart at the end of the
@@ -1894,6 +1994,10 @@ is a layout change in `PDFPageRenderer`, not a format change.
 | Change what a finger tap on the paper does | `CanvasViewModel.handleCanvasTap(at:)`; the recognizer is `canvasTapGesture` in `CanvasUIView.swift` |
 | Change how a selection is moved | The "Moving a selection" methods in `CanvasViewModel.swift`; the gestures live in `CanvasUIView.swift` |
 | Add an action to the selection menu | `selectionActions` in `CanvasSelectionLayer.swift`; the menu itself renders whatever it is handed |
+| Change a pin's starting size, limits or where it first lands | `PinnedReferenceGeometry.swift` (all the constants are at the top) |
+| Change how a pin looks or what its gestures do | `PinnedReferenceCard.swift`; the ink inside is `PinnedInkView.swift` |
+| Change the flash shown when a pin is tapped | Timing: `PinSourceFlash.swift`; outline: `PinnedSourceHighlightView.swift`; arrow: `PinnedSourceArrowView.swift` (placed by `PinnedReferenceGeometry.sourceArrowPlacement`) |
+| Change what gets pinned, or how pins are saved | `CanvasViewModel.pinSelection()` / `pinnedInk(for:)`; saving is `DocumentEditorSession.save()` → `DocumentMetadata.pinnedReferences` |
 | Change what counts as a tap rather than a drag | `selectionTapMovementLimit` / `selectionTapDurationLimit` in `CanvasViewModel.swift` |
 | Change the dock's quick colours | `InkColor.dockPalette` in `InkColor.swift` |
 | Change how the dock snaps | `DockEdge.nearest(to:in:)` in `DockEdge.swift` |

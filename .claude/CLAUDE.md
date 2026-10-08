@@ -95,7 +95,8 @@ rendering thread, because the sample drawings render far too fast to photograph)
 share sheet an export ends at — worth its own shot because it is presented from
 inside the bar's glass, which rewrites the appearance of what it hosts), and
 `problempicker` (the problem wheel with a tree in it — a fresh canvas shows only
-dashes).
+dashes), and `pinned` (a pinned reference over the problem set — seeded with
+`-TractSeedPinnedReference`, since making one needs a lasso).
 
 Do not hand-roll this. It exists because the pieces are non-obvious:
 

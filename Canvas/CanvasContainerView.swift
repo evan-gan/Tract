@@ -49,6 +49,12 @@ struct CanvasContainerView: View {
             PencilHoverDotView(hoverDot: pencilHoverDot)
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
+            // Above the hover dot because a pencil over a pin moves the pin
+            // rather than inking, so a nib preview there would be a lie. Shares
+            // the canvas view's frame so a pin's screen coordinates are the
+            // canvas view's own.
+            CanvasPinnedReferenceLayer(viewModel: viewModel)
+                .ignoresSafeArea()
             // Chrome deliberately keeps the safe area: it is what stops the
             // dock from parking under the status bar or the home indicator.
             overlayChrome

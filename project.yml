@@ -45,6 +45,7 @@ targets:
       - Document
       - Export
       - Overlay
+      - Pinning
       - ProblemLayout
       - ProblemPicker
       - ToolDock

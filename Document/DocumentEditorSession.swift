@@ -94,7 +94,8 @@ final class DocumentEditorSession: Identifiable {
                 outline: document.problemOutline,
                 origin: document.metadata.canvasOrigin,
                 scale: document.metadata.canvasScale,
-                background: document.backgroundStyle
+                background: document.backgroundStyle,
+                pinnedReferences: document.metadata.pinnedReferences ?? []
             )
             savedRevision = viewModel.revision
             loadState = .ready
@@ -136,10 +137,14 @@ final class DocumentEditorSession: Identifiable {
         // rather than stamping a new modifiedAt on the document.
         let outline = viewModel.problems.outline
         let background = viewModel.backgroundStyle
+        // Pins are a way of looking at the page, like pan and zoom, so they ride
+        // along too rather than marking the drawing as edited.
+        let pins = viewModel.pins.references
         let viewChanged = metadata.canvasOrigin != transform.translation
             || metadata.canvasScale != transform.scale
             || metadata.problemOutline != outline
             || metadata.backgroundStyle != background
+            || (metadata.pinnedReferences ?? []) != pins
         let revisionBeingSaved = viewModel.revision
         let contentChanged = hasUnsavedChanges || revisionBeingSaved != savedRevision
         guard contentChanged || viewChanged else { return }
@@ -148,6 +153,7 @@ final class DocumentEditorSession: Identifiable {
         metadata.canvasScale = transform.scale
         metadata.problemOutline = outline
         metadata.backgroundStyle = background
+        metadata.pinnedReferences = pins.isEmpty ? nil : pins
         // Merely looking at a document — panning, zooming — must not push it to the
         // front of the library as if it had been edited.
         if contentChanged { metadata.modifiedAt = .now }

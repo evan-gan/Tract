@@ -335,6 +335,9 @@ final class CanvasUIView: UIView {
         MainActor.assumeIsolated {
             switch gesture.state {
             case .began:
+                // Before the anchor is read, or the glide's next frame would move
+                // the page out from under the finger that just grabbed it.
+                viewModel.stopCanvasGlide()
                 fingerPanCanvasAnchor = viewModel.canvasTransform.toCanvas(screenLocation)
                 fingerPanAnchorValid = true
             case .changed:
@@ -382,6 +385,7 @@ final class CanvasUIView: UIView {
             //   2. Fallback: .began had 1 touch, so we capture lazily here.
             // First-frame computation is a no-op (produces the same transform).
             if !pinchAnchorsValid {
+                viewModel.stopCanvasGlide()
                 pinchCanvasAnchor0 = viewModel.canvasTransform.toCanvas(curr0)
                 pinchCanvasAnchor1 = viewModel.canvasTransform.toCanvas(curr1)
                 pinchAnchorsValid = true

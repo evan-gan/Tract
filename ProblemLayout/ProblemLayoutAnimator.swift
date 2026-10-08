@@ -176,21 +176,3 @@ final class ProblemLayoutAnimator {
         return 1 - (remaining * remaining * remaining) / 2
     }
 }
-
-/// A plain object for `CADisplayLink` to hold a selector on, so the animator
-/// itself does not have to be an `NSObject`.
-/// Main-actor isolated in full rather than hopping inside `fire()`: the link is
-/// added to the main run loop, so it only ever calls back on the main thread,
-/// and saying so is what lets the callback touch the animator at all.
-@MainActor
-private final class DisplayLinkProxy: NSObject {
-    private let onFire: () -> Void
-
-    init(onFire: @escaping () -> Void) {
-        self.onFire = onFire
-    }
-
-    @objc func fire() {
-        onFire()
-    }
-}

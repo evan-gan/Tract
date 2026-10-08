@@ -91,6 +91,17 @@ struct CanvasTransform: Sendable {
         return fitted
     }
 
+    /// The same zoom, panned so `canvasPoint` sits in the middle of a view of
+    /// `viewSize`. A pan only — the user keeps the magnification they chose.
+    func centering(_ canvasPoint: CGPoint, inViewOfSize viewSize: CGSize) -> CanvasTransform {
+        var centered = self
+        centered.translation = CGPoint(
+            x: viewSize.width / 2 - canvasPoint.x * scale,
+            y: viewSize.height / 2 - canvasPoint.y * scale
+        )
+        return centered
+    }
+
     /// Convert a screen-space length — a fingertip's reach, an eraser tip — to
     /// canvas units, so a tolerance that should stay a fixed size under the hand
     /// can be compared against canvas geometry.

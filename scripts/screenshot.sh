@@ -50,7 +50,8 @@ case "$SCREEN" in
   sharesheet) TEST_METHOD=testCaptureShareSheet ;;
   problempicker) TEST_METHOD=testCaptureProblemPicker ;;
   problembounds) TEST_METHOD=testCaptureProblemBounds ;;
-  *)       fail "Unknown screen '${SCREEN}' — use canvas, paper, library, librarylist, folder, exportpicker, exportproblems, exportprogress, sharesheet, problempicker or problembounds." ;;
+  pinned) TEST_METHOD=testCapturePinnedReference ;;
+  *)       fail "Unknown screen '${SCREEN}' — use canvas, paper, library, librarylist, folder, exportpicker, exportproblems, exportprogress, sharesheet, problempicker, problembounds or pinned." ;;
 esac
 
 SNAPSHOT_TEST="TractUITests/CanvasSnapshotUITests/$TEST_METHOD"

@@ -17,6 +17,11 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     /// it back at the top level, silently emptying the user's folders.
     /// 5 added `backgroundStyle`: an older build would open a ruled or blueprint
     /// document as dot grid and save that choice away.
+    ///
+    /// `pinnedReferences` came later *without* a bump, deliberately: an older
+    /// build drops the pins and loses no work — they are a view of ink the
+    /// strokes file still holds — so refusing to open the document would cost
+    /// more than it protects.
     static let currentSchemaVersion = 5
 
     var schemaVersion: Int
@@ -46,6 +51,9 @@ struct DocumentMetadata: Codable, Identifiable, Hashable, Sendable {
     /// The paper the document is drawn on. Optional so documents written before
     /// paper styles existed still load; `nil` means the original dot grid.
     var backgroundStyle: CanvasBackgroundStyle?
+    /// Ink floated over the canvas for reference. Optional so documents written
+    /// before pinning existed still load; `nil` means none.
+    var pinnedReferences: [PinnedReference]?
 
     init(
         id: UUID = UUID(),

@@ -87,6 +87,18 @@ struct CanvasTransformTests {
         #expect(visible == CGRect(x: 50, y: 50, width: 400, height: 300))
     }
 
+    @Test("Centring on a point pans it to the middle of the view without changing the zoom")
+    func centeringPansWithoutZooming() {
+        var transform = CanvasTransform()
+        transform.scale = 2
+        transform.translation = CGPoint(x: -700, y: 30)
+
+        let centered = transform.centering(CGPoint(x: 1000, y: 500), inViewOfSize: CGSize(width: 800, height: 600))
+
+        #expect(centered.scale == 2)
+        #expect(centered.toScreen(CGPoint(x: 1000, y: 500)) == CGPoint(x: 400, y: 300))
+    }
+
     @Test("Ink outside the visible rect is what the renderer can skip")
     func visibleRectExcludesOffscreenInk() {
         var transform = CanvasTransform()

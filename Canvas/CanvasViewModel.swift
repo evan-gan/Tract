@@ -32,6 +32,10 @@ final class CanvasViewModel {
     /// resolves to decides where a stroke is drawn and where a touch lands.
     let problemLayout = ProblemLayoutModel()
 
+    /// Earlier work floated over the page in screen space. A way of looking at
+    /// the page rather than an edit to it, so it never touches the undo stack.
+    let pins = PinnedReferenceModel()
+
     init() {
         // Structural edits to the tree have to reach the disk the same way ink
         // does; the picker has no other route to the autosave.
@@ -353,10 +357,12 @@ final class CanvasViewModel {
         outline: ProblemOutline,
         origin: CGPoint,
         scale: CGFloat,
-        background: CanvasBackgroundStyle = .dots
+        background: CanvasBackgroundStyle = .dots,
+        pinnedReferences: [PinnedReference] = []
     ) {
         strokes = loadedStrokes
         problems.restore(outline: outline)
+        pins.restore(pinnedReferences, keepingStrokeIDs: Set(loadedStrokes.map(\.id)))
         // The arrangement describes one page; it does not follow the user into
         // the next document they open. Every document opens arranged, because
         // working one problem at a time is the app's normal way of editing.
@@ -451,7 +457,20 @@ final class CanvasViewModel {
     }
 
     // MARK: - Canvas navigation
-    var canvasTransform = CanvasTransform()
+    var canvasTransform = CanvasTransform() {
+        didSet { dropSourceArrowOnceInView() }
+    }
+
+    /// The moment a pan or zoom brings a flashed pin's source on screen, its
+    /// arrow has done its job: it fades rather than pointing at ink already in
+    /// view. Costs nothing on an ordinary pan — the guard fails unless an arrow
+    /// is actually showing.
+    private func dropSourceArrowOnceInView() {
+        guard let highlight = pins.sourceHighlight, highlight.offscreenSourcePoint != nil,
+              offscreenSourcePoint(of: highlight.outlines) == nil
+        else { return }
+        pins.clearSourceArrow()
+    }
 
     /// Size of the canvas view in screen points, reported by the view that hosts
     /// it. Zooming to fit is the only thing that needs it: the drawing can only
@@ -1218,6 +1237,131 @@ final class CanvasViewModel {
         hideSelectionMenu()
         reflowLayoutAfterRetag()
         recordEdit()
+    }
+
+    /// Floats the selected ink over the canvas as a pinned reference, then drops
+    /// the selection — the pin is now what frames that ink.
+    ///
+    /// Only ink is pinned: the bounds of an eraser or lasso record would size a
+    /// card around nothing.
+    func pinSelection() {
+        let ink = StrokeRasterizer.inkStrokes(selectedStrokes)
+        guard !ink.isEmpty else { return }
+        let pinned = pins.pin(
+            strokeIDs: Set(ink.map(\.id)),
+            inkSize: StrokeRasterizer.inkedBounds(of: ink).size,
+            viewport: viewportSize
+        )
+        if let pinned {
+            // Measured where the ink is drawn — arrangement and all — so the
+            // card leaves from exactly the ink the user just lassoed.
+            let drawnBounds = PinnedReferenceGeometry.laidOutInkBounds(of: ink, placement: problemPlacement)
+                .applying(canvasTransform.matrix)
+            pins.beginArrival(PinArrival(
+                pinID: pinned.id,
+                sourceInkCenter: CGPoint(x: drawnBounds.midX, y: drawnBounds.midY),
+                canvasScale: canvasTransform.scale
+            ))
+        }
+        clearSelection()
+    }
+
+    /// The ink a pin shows, in page order, as it stands now — in its stored
+    /// position, not the arrangement's, so a pin does not reshuffle itself when
+    /// focus moves to another problem.
+    func pinnedInk(for reference: PinnedReference) -> [Stroke] {
+        StrokeRasterizer.inkStrokes(strokes.filter { reference.strokeIDs.contains($0.id) })
+    }
+
+    /// A tap on a pin raises it and flashes where its ink lives on the page,
+    /// with an arrow on the card when that ink is off screen.
+    ///
+    /// Every tap flashes, not only one on the pin already on top: pins that do
+    /// not overlap give no sign which is "on top", so a flash that depended on
+    /// it would seem to work only some of the time.
+    ///
+    /// The outline is the same shape the page frames each problem with, traced
+    /// here once per tap rather than per frame of the fade.
+    func handlePinTap(_ id: UUID) {
+        guard let reference = pins.references.first(where: { $0.id == id }) else { return }
+        let outlines = sourceOutlines(for: reference)
+        pins.raise(id)
+        pins.highlightSource(
+            of: id,
+            outlines: outlines,
+            offscreenSourcePoint: offscreenSourcePoint(of: outlines)
+        )
+    }
+
+    /// A double tap on a pin glides the page — a pan, at the current zoom — until
+    /// the ink the pin came from is in the middle of the screen, and flashes it
+    /// on arrival so the eye lands on it.
+    ///
+    /// The arrow the double tap's own single taps raised is left alone: it fades
+    /// by itself the moment the ink slides into frame (see `canvasTransform`).
+    func panToPinSource(_ id: UUID) {
+        guard let reference = pins.references.first(where: { $0.id == id }), viewportSize.width > 0 else { return }
+        let drawnBounds = PinnedReferenceGeometry.laidOutInkBounds(of: pinnedInk(for: reference), placement: problemPlacement)
+        guard !drawnBounds.isNull else { return }
+
+        let destination = canvasTransform.centering(
+            CGPoint(x: drawnBounds.midX, y: drawnBounds.midY),
+            inViewOfSize: viewportSize
+        )
+        let flashOnArrival = { [weak self] in
+            guard let self else { return }
+            pins.highlightSource(of: id, outlines: sourceOutlines(for: reference), offscreenSourcePoint: nil)
+        }
+        // Reduce Motion asks for the destination, not the journey.
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            canvasGlide.stop()
+            canvasTransform = destination
+            flashOnArrival()
+            return
+        }
+        canvasGlide.glide(
+            from: canvasTransform.translation,
+            to: destination.translation,
+            duration: Self.pinSourceGlideDuration,
+            apply: { [weak self] in self?.canvasTransform.translation = $0 },
+            onFinished: flashOnArrival
+        )
+    }
+
+    /// Long enough to read as travelling across the page rather than cutting to it.
+    static let pinSourceGlideDuration: TimeInterval = 1.0
+
+    @ObservationIgnored private let canvasGlide = CanvasGlideAnimator()
+
+    var isGlidingCanvas: Bool { canvasGlide.isGliding }
+
+    /// A finger on the canvas takes the page back from a glide in progress.
+    func stopCanvasGlide() {
+        canvasGlide.stop()
+    }
+
+    /// The same shape the page frames each problem with, traced fresh — once
+    /// per tap, never per frame.
+    private func sourceOutlines(for reference: PinnedReference) -> [PinSourceOutline] {
+        PinnedReferenceGeometry.sourceOutlines(
+            of: pinnedInk(for: reference),
+            padding: ProblemBoundsStyle.padding,
+            curveRadius: ProblemBoundsStyle.curveRadius
+        )
+    }
+
+    /// The source ink's centre on screen when none of it is in view; nil when
+    /// any of it is, since then the outline itself shows where it is.
+    private func offscreenSourcePoint(of outlines: [PinSourceOutline]) -> CGPoint? {
+        let placement = problemPlacement
+        let canvasBounds = outlines
+            .compactMap { PinnedReferenceGeometry.laidOutBounds(of: $0, placement: placement) }
+            .reduce(CGRect.null) { $0.union($1) }
+        guard !canvasBounds.isNull else { return nil }
+        let screenBounds = canvasBounds.applying(canvasTransform.matrix)
+        let screen = CGRect(origin: .zero, size: viewportSize)
+        guard !screen.intersects(screenBounds) else { return nil }
+        return CGPoint(x: screenBounds.midX, y: screenBounds.midY)
     }
 
     // MARK: - Undo / redo

@@ -32,9 +32,26 @@ enum SampleLibrarySeeder {
             )
             document.metadata.modifiedAt = .now
             document.metadata.problemOutline = sample.outline
+            document.metadata.pinnedReferences = samplePins(for: sample)
             let thumbnail = ThumbnailRenderer.renderPNG(strokes: sample.strokes)
             try? await store.save(document, thumbnail: thumbnail.map(ThumbnailUpdate.replace) ?? .unchanged)
         }
+    }
+
+    /// With `-TractSeedPinnedReference` too, the problem set opens with its first
+    /// problem pinned — XCUITest cannot lasso, so it cannot make a pin itself.
+    /// Opt-in, so the other shots of that document carry no pin.
+    static let pinnedReferenceLaunchArgument = "-TractSeedPinnedReference"
+
+    private static func samplePins(for sample: Sample) -> [PinnedReference]? {
+        guard
+            ProcessInfo.processInfo.arguments.contains(pinnedReferenceLaunchArgument),
+            let firstProblem = sample.outline?.node(at: [0])?.id
+        else { return nil }
+        let pinnedIDs = sample.strokes.filter { $0.problemNodeID == firstProblem }.map(\.id)
+        // Below the work and fully on screen in portrait — the narrower case —
+        // so its close and resize controls are in the shot and reachable.
+        return [PinnedReference(strokeIDs: Set(pinnedIDs), center: CGPoint(x: 580, y: 760), longestSide: 280)]
     }
 
     private typealias Sample = (

@@ -266,6 +266,23 @@ final class CanvasSnapshotUITests: XCTestCase {
         attachScreenshot(named: "problembounds")
     }
 
+    /// Captures a pinned reference floating over the problem set. Seeded, because
+    /// pinning needs a lasso and XCUITest cannot draw one.
+    func testCapturePinnedReference() {
+        let app = launchSeededLibrary(viewMode: "grid", extraArguments: ["-TractSeedPinnedReference"])
+
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Problem set'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 15),
+                      "The seeded library should contain the tagged problem set.")
+        card.tap()
+
+        XCTAssertTrue(app.otherElements["pinnedReference"].firstMatch.waitForExistence(timeout: 15),
+                      "The pin should be on screen before the shot is taken.")
+        Thread.sleep(forTimeInterval: 2.5)
+
+        attachScreenshot(named: "pinned")
+    }
+
     /// Captures the problem picker with a tree in it — a cold canvas has only
     /// dashes and a single uncreated row, which shows none of the drum.
     func testCaptureProblemPicker() {

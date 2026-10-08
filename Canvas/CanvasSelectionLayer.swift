@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Every piece of chrome that tracks the canvas rather than the screen and
-/// belongs *over* the drawing: the lasso loop, the selection outline and the
-/// selection's action menu.
+/// belongs *over* the drawing: the flash around a pin's source ink, the lasso
+/// loop, the selection outline and the selection's action menu.
 ///
 /// The problem regions are not here. They read as markings on the paper, so they
 /// are drawn under the ink in `CanvasContentLayer`.
@@ -40,6 +40,13 @@ struct CanvasSelectionLayer: View {
                     tint: viewModel.focusFrameTint(forNode: frameNodeID)
                 )
             }
+            // Always present, even with nothing to frame — see the view.
+            PinnedSourceHighlightView(
+                outlines: viewModel.pins.sourceHighlight?.outlines ?? [],
+                placement: viewModel.problemPlacement,
+                transform: viewModel.canvasTransform,
+                trigger: viewModel.pins.sourceHighlightSequence
+            )
             if !viewModel.lassoPath.isEmpty {
                 LassoPathView(
                     canvasPoints: viewModel.lassoPath,
@@ -78,6 +85,13 @@ struct CanvasSelectionLayer: View {
                 )
             )
         }
+        actions.append(
+            SelectionAction(
+                title: "Pin",
+                systemImage: "pin",
+                perform: viewModel.pinSelection
+            )
+        )
         actions.append(
             SelectionAction(
                 title: "Delete",
